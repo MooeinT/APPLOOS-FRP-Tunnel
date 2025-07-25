@@ -4,24 +4,6 @@ A script to easily install, manage, and optimize FRP (Fast Reverse Proxy) tunnel
 
 Developed By: **@AliTabari**
 
----
-
-## Usage
-
-To run the script, use the following command:
-
-### Using wget
-```bash
-wget -O - [https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh](https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh) | sudo bash
-
-### Using wget
-```bash
-wget -O - [https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh](https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh) | sudo bash
-Using curl
-Bash
-
-curl -sL [https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh](https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh) | sudo bash
-Features
 Menu-driven and easy to use.
 
 Automated setup for both frps (server) and frpc (client).
