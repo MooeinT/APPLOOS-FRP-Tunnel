@@ -8,7 +8,11 @@ Developed By: **@AliTabari**
 
 ## Usage
 
-To run the script, simply use one of the following commands on your server:
+To run the script, use the following command:
+
+### Using wget
+```bash
+wget -O - [https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh](https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh) | sudo bash
 
 ### Using wget
 ```bash
