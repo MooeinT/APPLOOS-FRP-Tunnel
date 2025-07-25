@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v24.4 - WSS with Certbot SSL)
+#   APPLOOS FRP TUNNEL - Full Management Script (v24.5 - WSS with Certbot SSL - HTTP-01)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -187,7 +187,7 @@ get_tunneled_ports() {
         
         # Check UDP ports
         if [ "$conflict" == false ] && [ -n "$FRP_UDP_PORTS_FRP" ]; then
-            OLD_IFS=$IFS; IFS=','; read -ra CHECK_PORTS <<< "$FRP_UDP_PORTS_FRP"; IFS=$OLD_IFS;
+            OLD_IFS=$IFS; IFS=','; read -ra CHECK_PORTS <<< "$FRP_UDP_PORTS_FWP"; IFS=$OLD_IFS;
             for p_range in "${CHECK_PORTS[@]}"; do
                 if [[ "$p_range" =~ "-" ]]; then # It's a range
                     local start_port=$(echo "$p_range" | cut -d'-' -f1)
@@ -227,9 +227,9 @@ get_tunneled_ports() {
     all_tcp_ports_for_cleanup+=("${FRP_TCP_CONTROL_PORT}")
     all_udp_ports_for_cleanup+=("${FRP_QUIC_CONTROL_PORT}") # QUIC control is UDP
 
-    # If WSS, add ports 80 and 443 to cleanup list
+    # If WSS, add port 443 to cleanup list
     if [[ "$FRP_PROTOCOL" == "wss" ]]; then
-        all_tcp_ports_for_cleanup+=("80") # Add for web server, though FRP handles 443 directly
+        all_tcp_ports_for_cleanup+=("80") # Certbot might need this temporarily
         all_tcp_ports_for_cleanup+=("443")
     fi
 
@@ -297,16 +297,31 @@ install_certbot() {
 
 get_ssl_certificate() {
     install_certbot
-    echo -e "\n${YELLOW}Attempting to obtain SSL certificate for ${FRP_DOMAIN} using Certbot (DNS-01 Challenge)...${NC}"
-    echo -e "${CYAN}Certbot will provide a TXT record. You MUST add this record to your domain's DNS settings.${NC}"
-    echo -e "${CYAN}After adding the TXT record, press Enter to continue the process.${NC}"
+    echo -e "\n${YELLOW}Attempting to obtain SSL certificate for ${FRP_DOMAIN} using Certbot (HTTP-01 Challenge)...${NC}"
+    echo -e "${CYAN}Ensuring port 80 is open and not in use by other services for Certbot validation.${NC}"
 
-    # Try to obtain certificate
-    certbot certonly --manual --preferred-challenges dns --email admin@${FRP_DOMAIN} --agree-tos --no-eff-email -d "${FRP_DOMAIN}"
+    # Check if port 80 is free
+    if sudo lsof -i :80 > /dev/null; then
+        echo -e "${RED}ERROR: Port 80 is currently in use by another process. Certbot cannot use HTTP-01 challenge if port 80 is occupied.${NC}"
+        echo -e "${RED}Please free up port 80 or choose TCP/QUIC, or manually obtain a certificate.${NC}"
+        return 1
+    fi
+
+    # Allow port 80 in UFW temporarily for Certbot validation
+    ufw allow 80/tcp comment "Temporary for Certbot HTTP-01" > /dev/null
+    ufw reload > /dev/null
+
+    # Try to obtain certificate using webroot (HTTP-01)
+    # Using --standalone which will temporarily run a webserver on port 80
+    certbot certonly --standalone --email admin@${FRP_DOMAIN} --agree-tos --no-eff-email -d "${FRP_DOMAIN}"
+
+    # Remove temporary UFW rule for 80 if it was added by us
+    ufw delete allow 80/tcp > /dev/null 2>&1 || true # Only delete if it was added by this script
+    ufw reload > /dev/null 2>&1
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}ERROR: Failed to obtain SSL certificate for ${FRP_DOMAIN}. Please check Certbot output above for details.${NC}"
-        echo -e "${RED}Ensure your DNS TXT record is correctly added and propagated before trying again.${NC}"
+        echo -e "${RED}Ensure your domain resolves to this server's IP and port 80 is free.${NC}"
         return 1
     fi
     
@@ -616,7 +631,7 @@ main_menu() {
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
         echo "================================================="
-        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.4"
+        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.5"
         echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
         echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
