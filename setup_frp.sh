@@ -131,7 +131,8 @@ get_server_ips() {
 get_tunneled_ports() {
     echo -e "\n${CYAN}Enter the TCP and/or UDP port(s) you want to tunnel.${NC}"
     echo -e "${CYAN}Use commas for multiple ports, e.g., 8080,443. Use hyphens for ranges, e.g., 20000-30000.${NC}"
-    read -p "Enter Ports (e.g., 8080, 20000-30000/tcp, 500,4500/udp): " user_ports_input
+    echo -e "${CYAN}Specify protocol with /tcp or /udp (e.g., 8080/tcp, 500/udp). Default is TCP if not specified.${NC}"
+    read -p "Enter Ports: " user_ports_input
 
     # Split input into TCP and UDP parts based on /tcp or /udp suffix
     FRP_TCP_PORTS_FRP=""
@@ -148,10 +149,10 @@ get_tunneled_ports() {
     for segment in "${PORTS_ARRAY[@]}"; do
         if [[ "$segment" =~ /tcp$ ]]; then
             port_val=${segment%/*} # Remove /tcp suffix
-            if [[ -n "$port_val" ]]; then temp_tcp_ports+="$port_val,"; fi
+            if [[ -n "$port_val" && "$port_val" =~ ^[0-9]+(-[0-9]+)?$ ]]; then temp_tcp_ports+="$port_val,"; fi
         elif [[ "$segment" =~ /udp$ ]]; then
             port_val=${segment%/*} # Remove /udp suffix
-            if [[ -n "$port_val" ]]; then temp_udp_ports+="$port_val,"; fi
+            if [[ -n "$port_val" && "$port_val" =~ ^[0-9]+(-[0-9]+)?$ ]]; then temp_udp_ports+="$port_val,"; fi
         elif [[ "$segment" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
             # If no /tcp or /udp suffix, default to TCP
             temp_tcp_ports+="$segment,"
@@ -172,17 +173,32 @@ get_tunneled_ports() {
     # Check for XUI panel port conflict
     if [[ -n "$XUI_PANEL_PORT" ]]; then
         local conflict=false
-        OLD_IFS=$IFS; IFS=','; read -ra CHECK_PORTS <<< "$FRP_TCP_PORTS_FRP"; IFS=$OLD_IFS;
-        for p in "${CHECK_PORTS[@]}"; do
-            if [[ "$p" == "$XUI_PANEL_PORT" ]]; then conflict=true; break; fi
-        done
-        OLD_IFS=$IFS; IFS=','; read -ra CHECK_PORTS <<< "$FRP_UDP_PORTS_FRP"; IFS=$OLD_IFS;
-        for p in "${CHECK_PORTS[@]}"; do
-            if [[ "$p" == "$XUI_PANEL_PORT" ]]; then conflict=true; break; fi
-        done
+        # Check TCP ports
+        if [ -n "$FRP_TCP_PORTS_FRP" ]; then
+            OLD_IFS=$IFS; IFS=','; read -ra CHECK_PORTS <<< "$FRP_TCP_PORTS_FRP"; IFS=$OLD_IFS;
+            for p_range in "${CHECK_PORTS[@]}"; do
+                if [[ "$p_range" =~ "-" ]]; then # It's a range
+                    local start_port=$(echo "$p_range" | cut -d'-' -f1)
+                    local end_port=$(echo "$p_range" | cut -d'-' -f2)
+                    if (( XUI_PANEL_PORT >= start_port && XUI_PANEL_PORT <= end_port )); then conflict=true; break; fi
+                elif [[ "$p_range" == "$XUI_PANEL_PORT" ]]; then conflict=true; break; fi
+            done
+        fi
+        
+        # Check UDP ports
+        if [ "$conflict" == false ] && [ -n "$FRP_UDP_PORTS_FRP" ]; then
+            OLD_IFS=$IFS; IFS=','; read -ra CHECK_PORTS <<< "$FRP_UDP_PORTS_FRP"; IFS=$OLD_IFS;
+            for p_range in "${CHECK_PORTS[@]}"; do
+                if [[ "$p_range" =~ "-" ]]; then # It's a range
+                    local start_port=$(echo "$p_range" | cut -d'-' -f1)
+                    local end_port=$(echo "$p_range" | cut -d'-' -f2)
+                    if (( XUI_PANEL_PORT >= start_port && XUI_PANEL_PORT <= end_port )); then conflict=true; break; fi
+                elif [[ "$p_range" == "$XUI_PANEL_PORT" ]]; then conflict=true; break; fi
+            done
+        fi
 
         if [[ "$conflict" == true ]]; then
-            echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
+            echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed as it falls within the specified range/port.${NC}"
             return 1
         fi
     fi
@@ -193,22 +209,33 @@ get_tunneled_ports() {
 
     # Save ports for later UFW cleanup
     # Overwrite if exists to ensure only current ports are listed
-    echo "" > "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
-    echo "" > "${FRP_INSTALL_DIR}/frp_udp_ports_ufw.conf"
+    # Use array for easier management and avoid issues with single line append
+    local all_tcp_ports_for_cleanup=()
+    local all_udp_ports_for_cleanup=()
 
-    if [[ -n "$FRP_TCP_PORTS_UFW" ]]; then echo "$FRP_TCP_PORTS_UFW" >> "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"; fi
-    if [[ -n "$FRP_UDP_PORTS_UFW" ]]; then echo "$FRP_UDP_PORTS_UFW" >> "${FRP_INSTALL_DIR}/frp_udp_ports_ufw.conf"; fi
+    if [[ -n "$FRP_TCP_PORTS_UFW" ]]; then
+        OLD_IFS=$IFS; IFS=','; read -ra temp_array <<< "$FRP_TCP_PORTS_UFW"; IFS=$OLD_IFS;
+        all_tcp_ports_for_cleanup+=("${temp_array[@]}")
+    fi
+    if [[ -n "$FRP_UDP_PORTS_UFW" ]]; then
+        OLD_IFS=$IFS; IFS=','; read -ra temp_array <<< "$FRP_UDP_PORTS_UFW"; IFS=$OLD_IFS;
+        all_udp_ports_for_cleanup+=("${temp_array[@]}")
+    fi
     
     # Always include dashboard and control ports in UFW cleanup list
-    echo "${FRP_DASHBOARD_PORT}" >> "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
-    echo "${FRP_TCP_CONTROL_PORT}" >> "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
-    echo "${FRP_QUIC_CONTROL_PORT}" >> "${FRP_INSTALL_DIR}/frp_udp_ports_ufw.conf" # QUIC control is UDP
+    all_tcp_ports_for_cleanup+=("${FRP_DASHBOARD_PORT}")
+    all_tcp_ports_for_cleanup+=("${FRP_TCP_CONTROL_PORT}")
+    all_udp_ports_for_cleanup+=("${FRP_QUIC_CONTROL_PORT}") # QUIC control is UDP
 
     # If WSS, add ports 80 and 443 to cleanup list
     if [[ "$FRP_PROTOCOL" == "wss" ]]; then
-        echo "80" >> "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
-        echo "443" >> "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
+        all_tcp_ports_for_cleanup+=("80")
+        all_tcp_ports_for_cleanup+=("443")
     fi
+
+    # Write unique ports to files
+    printf "%s\n" "${all_tcp_ports_for_cleanup[@]}" | sort -u > "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
+    printf "%s\n" "${all_udp_ports_for_cleanup[@]}" | sort -u > "${FRP_INSTALL_DIR}/frp_udp_ports_ufw.conf"
 
     return 0
 }
@@ -343,14 +370,14 @@ log_level = info
 log_max_days = 3
 EOF
 
-    case $FRP_PROTOCOL in
+    case $FRP_PROTOCOL in # <--- Added 'in' here
         "tcp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
         "quic") echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
         "wss")
             echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini
             echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini
             ;;
-    esac
+    esac # <--- Added 'esac' here
 
     add_ufw_rules # Add new UFW rules
 
@@ -397,7 +424,7 @@ log_level = info
 log_max_days = 3
 EOF
 
-    case $FRP_PROTOCOL
+    case $FRP_PROTOCOL in # <--- Added 'in' here
         "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;;
         "quic")
             echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini
@@ -409,7 +436,7 @@ EOF
             echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini
             echo "subdomain = ${FRP_CLIENT_SUBDOMAIN}" >> ${FRP_INSTALL_DIR}/frpc.ini
             ;;
-    esac
+    esac # <--- Added 'esac' here
 
     # Add general TCP/UDP range proxies
     if [ -n "$FRP_TCP_PORTS_FRP" ]; then
