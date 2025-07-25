@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v12.0 - Final Menu Fix)
+#   APPLOOS FRP TUNNEL - Full Management Script (v13.0 - Final Menu Logic Fix)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -15,6 +15,7 @@ SYSTEMD_DIR="/etc/systemd/system"
 FRP_TCP_CONTROL_PORT="7000"
 FRP_QUIC_CONTROL_PORT="7001"
 FRP_DASHBOARD_PORT="7500"
+OPTIMIZATIONS_FILE="/etc/sysctl.d/99-network-optimizations.conf"
 
 # --- Color Codes for beautiful output ---
 GREEN='\033[0;32m'
@@ -31,7 +32,7 @@ check_root() {
     fi
 }
 
-# --- Input and Helper Functions ---
+# --- Input and Helper Functions (Using 'return 1' on failure instead of 'exit') ---
 
 get_server_ips() {
     echo -e "${CYAN}Please provide the IP addresses for the tunnel setup.${NC}"
@@ -40,6 +41,7 @@ get_server_ips() {
 
     read -p "Enter the Public IP for the FOREIGN Server (where services are): " FOREIGN_SERVER_IP
     if [[ -z "$FOREIGN_SERVER_IP" ]]; then echo -e "${RED}IP cannot be empty.${NC}"; return 1; fi
+    return 0
 }
 
 get_port_input() {
@@ -49,6 +51,7 @@ get_port_input() {
     if ! [[ "$user_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid format.${NC}"; return 1; fi
     FRP_TUNNEL_PORTS_FRP=$user_ports
     FRP_TUNNEL_PORTS_UFW=${user_ports//-/:}
+    return 0
 }
 
 get_protocol_choice() {
@@ -63,6 +66,8 @@ get_protocol_choice() {
     echo -e "${GREEN}Protocol set to: ${FRP_PROTOCOL}${NC}"
 }
 
+# --- Core Logic Functions ---
+
 stop_frp_processes() {
     systemctl stop frps.service > /dev/null 2>&1; systemctl stop frpc.service > /dev/null 2>&1
     killall frps > /dev/null 2>&1 || true; killall frpc > /dev/null 2>&1 || true
@@ -76,13 +81,9 @@ download_and_extract() {
     rm "${FRP_TAR_FILE}"
 }
 
-# --- Core Logic Functions ---
-
 setup_iran_server() {
-    # Check if input functions succeed. If not, return to main menu.
-    get_server_ips || return 1
-    get_port_input || return 1
-    get_protocol_choice || return 1
+    # Chaining input functions. If any fails, the function returns.
+    get_server_ips && get_port_input && get_protocol_choice || return 1
 
     echo -e "\n${YELLOW}--- Starting Full Setup for Iran Server (frps) ---${NC}"
     stop_frp_processes; download_and_extract
@@ -109,11 +110,7 @@ EOF
     fi
 
     echo -e "${YELLOW}--> Setting up firewall...${NC}"
-    if [ "$FRP_PROTOCOL" == "quic" ]; then
-        ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null
-    else
-        ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null
-    fi
+    if [ "$FRP_PROTOCOL" == "quic" ]; then ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null; else ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi
     ufw allow ${FRP_DASHBOARD_PORT}/tcp > /dev/null
     OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_TUNNEL_PORTS_UFW"; IFS=$OLD_IFS
     for port in "${PORTS_ARRAY[@]}"; do ufw allow "$port"/tcp > /dev/null; done
@@ -135,10 +132,7 @@ EOF
 }
 
 setup_foreign_server() {
-    # Check if input functions succeed. If not, return to main menu.
-    get_server_ips || return 1
-    get_port_input || return 1
-    get_protocol_choice || return 1
+    get_server_ips && get_port_input && get_protocol_choice || return 1
 
     echo -e "\n${YELLOW}--- Starting Full Setup for Foreign Server (frpc) ---${NC}"
     stop_frp_processes; download_and_extract
@@ -151,9 +145,7 @@ server_addr = ${IRAN_SERVER_IP}
 server_port = ${FRP_QUIC_CONTROL_PORT}
 protocol = quic
 [range:vless-tcp]
-type = tcp; local_ip = 127.0.0.1
-local_port = ${FRP_TUNNEL_PORTS_FRP}
-remote_port = ${FRP_TUNNEL_PORTS_FRP}
+type = tcp; local_ip = 127.0.0.1; local_port = ${FRP_TUNNEL_PORTS_FRP}; remote_port = ${FRP_TUNNEL_PORTS_FRP}
 EOF
     else
         cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
@@ -161,9 +153,7 @@ EOF
 server_addr = ${IRAN_SERVER_IP}
 server_port = ${FRP_TCP_CONTROL_PORT}
 [range:vless-tcp]
-type = tcp; local_ip = 127.0.0.1
-local_port = ${FRP_TUNNEL_PORTS_FRP}
-remote_port = ${FRP_TUNNEL_PORTS_FRP}
+type = tcp; local_ip = 127.0.0.1; local_port = ${FRP_TUNNEL_PORTS_FRP}; remote_port = ${FRP_TUNNEL_PORTS_FRP}
 EOF
     fi
 
@@ -198,20 +188,16 @@ remove_cubic() { sed -i '/net.ipv4.tcp_congestion_control=cubic/d' /etc/sysctl.c
 show_optimization_menu() {
     while true; do
         clear
-        echo "================================================="
-        echo -e "      ${CYAN}Network Optimizations Menu${NC}"
-        echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}Network Optimizations Menu${NC}"; echo "================================================="
         local current_congestion_control=$(sysctl -n net.ipv4.tcp_congestion_control)
         echo -e "Current Algorithm: ${YELLOW}${current_congestion_control}${NC}"
-        echo "-------------------------------------------------"
-        echo "1. Install BBR"; echo "2. Remove BBR"; echo "---"
+        echo "-------------------------------------------------"; echo "1. Install BBR"; echo "2. Remove BBR"; echo "---"
         echo "3. Install Cubic (Linux Default)"; echo "4. Remove Cubic"; echo "---"; echo "5. Back to Main Menu"
-        echo "-------------------------------------------------"
-        read -p "Enter your choice [1-5]: " opt_choice
+        echo "-------------------------------------------------"; read -p "Enter your choice [1-5]: " opt_choice
         case $opt_choice in
             1) install_bbr; ;; 2) remove_bbr; ;; 3) install_cubic; ;;
             4) remove_cubic; ;; 5) break ;; *) echo -e "${RED}Invalid choice.${NC}";;
-        esac; echo -e "${CYAN}Operation complete. Press [Enter] to continue...${NC}"; read -n 1;
+        esac; echo -e "${CYAN}Operation complete. Press [Enter]...${NC}"; read -n 1;
     done
 }
 
@@ -222,7 +208,7 @@ while true; do
     clear
     CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
     echo "================================================="
-    echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v12.0"
+    echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v13.0"
     echo "================================================="
     echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
     echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
@@ -236,29 +222,33 @@ while true; do
 
     read -p "Enter your choice [1-5]: " choice
 
+    # Perform the action based on the choice
     case $choice in
-        1) 
+        1)
             setup_iran_server
-            read -p $'\nPress [Enter] to return to menu...'
             ;;
-        2) 
+        2)
             setup_foreign_server
-            read -p $'\nPress [Enter] to return to menu...'
             ;;
-        3) 
+        3)
             uninstall_frp
-            read -p $'\nPress [Enter] to return to menu...'
             ;;
-        4) 
-            show_optimization_menu 
+        4)
+            show_optimization_menu
+            continue # Skip the pause below, as the submenu handles its own loop
             ;;
-        5) 
-            echo -e "${YELLOW}Exiting.${NC}"; 
-            break 
+        5)
+            echo -e "${YELLOW}Exiting.${NC}";
+            break # Exit the while loop
             ;;
-        *) 
-            echo -e "${RED}Invalid choice. Please try again.${NC}"; 
-            sleep 2 
+        *)
+            echo -e "${RED}Invalid choice. Please try again.${NC}";
+            sleep 2
+            continue # Skip the pause and redisplay menu
             ;;
     esac
+
+    # Pause at the end of the loop for main actions (1, 2, 3)
+    echo -e "\n${CYAN}--- Press [Enter] to return to the main menu. ---${NC}"
+    read
 done
