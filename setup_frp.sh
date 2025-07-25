@@ -13,7 +13,7 @@
  FRP_INSTALL_DIR="/opt/frp"
  SYSTEMD_DIR="/etc/systemd/system"
  FRP_TCP_CONTROL_PORT="7000"
- FRP_QUIC_CONTROL_PORT="7001"
+ FRP_QUIC_CONTROL_PORT="7001" # Used for UDP and QUIC main connection
  FRP_DASHBOARD_PORT="7500"
  XUI_PANEL_PORT="54333" # Protected Port
 
@@ -41,7 +41,7 @@
      return 0
  }
 
-get_frp_token() {
+ get_frp_token() {
     read -p "Please enter the Authentication Token for FRP (a strong, random string): " FRP_TOKEN
     if [ -z "$FRP_TOKEN" ]; then
         echo -e "${RED}Authentication token cannot be empty. Please enter a token.${NC}"
@@ -67,17 +67,12 @@ get_frp_token() {
      fi
      if [[ -n "$user_udp_ports" && ! "$user_udp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid UDP port format.${NC}"; return 1; fi
 
-     # Allowing HTTP/HTTPS ports for direct tunneling if user wants.
-     echo -e "\n${CYAN}Do you want to tunnel HTTP (port 80) and HTTPS (port 443)? [y/N]: ${NC}"
+     # Ask if user wants to tunnel HTTP/HTTPS
+     echo -e "\n${CYAN}Do you want to tunnel HTTP (port 80) and HTTPS (port 443) via Vhost? [y/N]: ${NC}"
      read -p "Enter choice [y/N]: " http_https_choice
+     HTTP_HTTPS_TUNNEL="false"
      if [[ "$http_https_choice" =~ ^[Yy]$ ]]; then
          HTTP_HTTPS_TUNNEL="true"
-     else
-         HTTP_HTTPS_TUNNEL="false"
-     fi
-
-     # Ask for domain for HTTP/HTTPS vhost if chosen
-     if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then
          read -p "Enter your domain/subdomain for HTTP/HTTPS Vhost (e.g., frp.yourdomain.com): " FRP_DOMAIN
          if [[ -z "$FRP_DOMAIN" ]]; then
              echo -e "${RED}Domain cannot be empty for HTTP/HTTPS Vhost.${NC}"
@@ -85,7 +80,10 @@ get_frp_token() {
          fi
      fi
 
-     if [[ -z "$user_tcp_ports" && -z "$user_udp_ports" && "$HTTP_HTTPS_TUNNEL" != "true" ]]; then echo -e "${RED}You must enter at least one TCP or UDP port, or enable HTTP/HTTPS tunneling.${NC}"; return 1; fi
+     if [[ -z "$user_tcp_ports" && -z "$user_udp_ports" && "$HTTP_HTTPS_TUNNEL" != "true" ]]; then
+         echo -e "${RED}You must enter at least one TCP or UDP port, or enable HTTP/HTTPS tunneling.${NC}"
+         return 1
+     fi
 
      FRP_TCP_PORTS_FRP=$user_tcp_ports; FRP_TCP_PORTS_UFW=${user_tcp_ports//-/:}
      FRP_UDP_PORTS_FRP=$user_udp_ports; FRP_UDP_PORTS_UFW=${user_udp_ports//-/:}
@@ -93,7 +91,12 @@ get_frp_token() {
  }
 
  get_protocol_choice() {
-     echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}\n  1. TCP (Standard)\n  2. QUIC (Recommended for latency)\n  3. STCP (Secret TCP - for private, encrypted TCP tunnels)\n  4. SUDP (Secret UDP - for private, encrypted UDP tunnels)\n  5. XTCP (P2P Connect - experimental direct client-to-client connection)"
+     echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}"
+     echo "  1. TCP (Standard)"
+     echo "  2. QUIC (Recommended for latency)"
+     echo "  3. STCP (Secret TCP - for private, encrypted TCP tunnels)"
+     echo "  4. SUDP (Secret UDP - for private, encrypted UDP tunnels)"
+     echo "  5. XTCP (P2P Connect - experimental direct client-to-client connection)"
      read -p "Enter choice [1-5]: " proto_choice
      FRP_PROTOCOL="tcp" # Default
      case "$proto_choice" in
@@ -106,7 +109,7 @@ get_frp_token() {
      esac
 
      TCP_MUX="false"
-     if [[ "$FRP_PROTOCOL" == "tcp" || "$FRP_PROTOCOL" == "stcp" ]]; then # TCP MUX generally applies to TCP-based protocols
+     if [[ "$FRP_PROTOCOL" == "tcp" ]]; then # TCP MUX generally applies to TCP-based protocols
          read -p $'\n'"Enable TCP Multiplexer (tcpmux) for better performance? [y/N]: " mux_choice
          if [[ "$mux_choice" =~ ^[Yy]$ ]]; then TCP_MUX="true"; fi
      fi
@@ -120,10 +123,18 @@ get_frp_token() {
  }
  download_and_extract() {
      rm -rf ${FRP_INSTALL_DIR}; mkdir -p ${FRP_INSTALL_DIR}
-     FRP_TAR_FILE="frp_${FRP_VERSION}_linux_amd64.tar.gz" # Assuming amd64 for simplicity, can be dynamic
-     wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${FRP_TAR_FILE}" -O "${FRP_TAR_FILE}"
-     tar -zxvf "${FRP_TAR_FILE}" -C "${FRP_INSTALL_DIR}" --strip-components=1
-     rm "${FRP_TAR_FILE}"
+     ARCH=$(uname -m)
+     case "$ARCH" in
+         "x86_64") FRP_ARCH="amd64" ;;
+         "aarch64") FRP_ARCH="arm64" ;;
+         "armv7l") FRP_ARCH="arm" ;;
+         "i386") FRP_ARCH="386" ;;
+         *) error_exit "Your CPU architecture (${ARCH}) is not supported." ;;
+     esac
+     FRP_TAR_FILE="frp_${FRP_VERSION}_linux_${FRP_ARCH}.tar.gz"
+     wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${FRP_TAR_FILE}" -O "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}"
+     tar -zxvf "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}" -C "${FRP_INSTALL_DIR}" --strip-components=1
+     rm "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}"
  }
  setup_iran_server() {
      get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
@@ -132,7 +143,7 @@ get_frp_token() {
 [common]
 bind_addr = 0.0.0.0
 bind_port = ${FRP_TCP_CONTROL_PORT}
-bind_udp_port = ${FRP_QUIC_CONTROL_PORT} # Used for UDP and QUIC
+bind_udp_port = ${FRP_QUIC_CONTROL_PORT}
 kcp_bind_port = ${FRP_QUIC_CONTROL_PORT} # Often same as bind_udp_port for QUIC
 vhost_http_port = 80
 vhost_https_port = 443
@@ -151,7 +162,9 @@ tcp_mux = ${TCP_MUX}
 # log_level = info
 # log_max_days = 3
 EOF
+
      echo -e "${YELLOW}--> Setting up firewall...${NC}"
+     sudo ufw allow ssh comment "Allow SSH" > /dev/null
      sudo ufw allow ${FRP_TCP_CONTROL_PORT}/tcp comment "FRP TCP Control" > /dev/null
      sudo ufw allow ${FRP_QUIC_CONTROL_PORT}/udp comment "FRP UDP/QUIC Control" > /dev/null
      sudo ufw allow ${FRP_DASHBOARD_PORT}/tcp comment "FRP Dashboard" > /dev/null
@@ -174,6 +187,15 @@ EOF
              sudo ufw allow "$port"/udp comment "FRP Tunneled UDP" > /dev/null
          done
      fi
+
+     # Allow ports for STCP, SUDP, XTCP if they are used as remote ports
+     # These are example remote ports, user might change them.
+     # For STCP, SUDP, XTCP, the remote_port on the server needs to be open.
+     # Default example remote ports for these are 6003, 6004, 6005
+     sudo ufw allow 6003/tcp comment "FRP STCP Remote Port (Example)" > /dev/null
+     sudo ufw allow 6004/udp comment "FRP SUDP Remote Port (Example)" > /dev/null
+     sudo ufw allow 6005/tcp comment "FRP XTCP Remote Port (Example)" > /dev/null # XTCP can use TCP for initial connection
+
      sudo ufw reload > /dev/null
 
      cat > ${SYSTEMD_DIR}/frps.service << EOF
@@ -268,7 +290,7 @@ EOF
 type = stcp
 local_ip = 127.0.0.1
 local_port = 22 # Example: Tunnel SSH
-remote_port = 6003 # Example: Remote port on Iran server
+remote_port = 6003 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
 sk = YOUR_STCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
 EOF
     fi
@@ -279,7 +301,7 @@ EOF
 type = sudp
 local_ip = 127.0.0.1
 local_port = 53 # Example: Tunnel DNS
-remote_port = 6004 # Example: Remote port on Iran server
+remote_port = 6004 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
 sk = YOUR_SUDP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
 EOF
     fi
@@ -290,7 +312,7 @@ EOF
 type = xtcp
 local_ip = 127.0.0.1
 local_port = 5900 # Example: Tunnel VNC
-remote_port = 6005 # Example: Remote port on Iran server
+remote_port = 6005 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
 sk = YOUR_XTCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
 EOF
     fi
