@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v19.0 - Simplified Optimizations)
+#   APPLOOS FRP TUNNEL - Full Management Script (v20.0 - Simplified)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -135,42 +135,29 @@ uninstall_frp() {
     echo -e "\n${GREEN}SUCCESS! FRP has been uninstalled.${NC}"
 }
 
-# --- Optimization Functions (Simplified) ---
-install_bbr() { sed -i '/net.ipv4.tcp_congestion_control\|net.core.default_qdisc/d' /etc/sysctl.conf; echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf; echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> BBR enabled.${NC}"; }
-remove_bbr() { sed -i '/net.ipv4.tcp_congestion_control=bbr\|net.core.default_qdisc=fq/d' /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> BBR removed.${NC}"; }
-install_cubic() { sed -i '/net.ipv4.tcp_congestion_control\|net.core.default_qdisc/d' /etc/sysctl.conf; echo "net.ipv4.tcp_congestion_control=cubic" >> /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> Cubic enabled.${NC}"; }
-remove_cubic() { sed -i '/net.ipv4.tcp_congestion_control=cubic/d' /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> Cubic setting removed.${NC}"; }
-show_optimization_menu() {
-    while true; do
-        clear; echo "================================================="; echo -e "      ${CYAN}Network Optimizations Menu${NC}"; echo "================================================="
-        local current_congestion_control=$(sysctl -n net.ipv4.tcp_congestion_control); echo -e "Current Algorithm: ${YELLOW}${current_congestion_control}${NC}"
-        echo "-------------------------------------------------"; echo "1. Install BBR"; echo "2. Remove BBR"; echo "---"
-        echo "3. Install Cubic (Linux Default)"; echo "4. Remove Cubic"; echo "---"; echo "5. Back to Main Menu"
-        echo "-------------------------------------------------"; read -p "Enter your choice [1-5]: " opt_choice
-        case $opt_choice in
-            1) install_bbr; ;; 2) remove_bbr; ;; 3) install_cubic; ;;
-            4) remove_cubic; ;; 5) break ;; *) echo -e "${RED}Invalid choice.${NC}";;
-        esac; echo -e "${CYAN}Operation complete. Press [Enter]...${NC}"; read -n 1;
-    done
-}
-
 # --- Main Menu Display and Logic ---
 main_menu() {
     while true; do
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v19.0"; echo "================================================="
-        echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
+        echo "================================================="
+        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v20.0"
+        echo "================================================="
+        echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
+        echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
-        echo "-------------------------------------------------"; echo "  1. Setup IRAN Server (frps)"; echo "  2. Setup FOREIGN Server (frpc)"
-        echo "  3. UNINSTALL FRP"; echo "  4. Network Optimizations Menu"; echo "  5. Exit"; echo "-------------------------------------------------"
-        read -p "Enter your choice [1-5]: " choice
+        echo "-------------------------------------------------"
+        echo "  1. Setup this machine as IRAN Server (frps)"
+        echo "  2. Setup this machine as FOREIGN Server (frpc)"
+        echo "  3. UNINSTALL FRP from this machine"
+        echo "  4. Exit"
+        echo "-------------------------------------------------"
+        read -p "Enter your choice [1-4]: " choice
         case $choice in
             1) setup_iran_server; echo -e "\n${CYAN}Press [Enter]...${NC}"; read ;;
             2) setup_foreign_server; echo -e "\n${CYAN}Press [Enter]...${NC}"; read ;;
             3) uninstall_frp; echo -e "\n${CYAN}Press [Enter]...${NC}"; read ;;
-            4) show_optimization_menu ;;
-            5) echo -e "${YELLOW}Exiting.${NC}"; exit 0 ;;
+            4) echo -e "${YELLOW}Exiting.${NC}"; exit 0 ;;
             *) echo -e "${RED}Invalid choice.${NC}"; sleep 2 ;;
         esac
     done
