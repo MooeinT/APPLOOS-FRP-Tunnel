@@ -12,11 +12,11 @@ To run the script, simply use one of the following commands on your server:
 
 ### Using wget
 ```bash
-wget -O - [https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh](https://raw.githubusercontent.com/YourUsername/APPLOOS-FRP-Tunnel/main/setup_frp.sh) | sudo bash
+wget -O - [https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh](https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh) | sudo bash
 Using curl
 Bash
 
-curl -sL [https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh](https://raw.githubusercontent.com/YourUsername/APPLOOS-FRP-Tunnel/main/setup_frp.sh) | sudo bash
+curl -sL [https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh](https://raw.githubusercontent.com/MooeinT/APPLOOS-FRP-Tunnel/main/setup_frp.sh) | sudo bash
 Features
 Menu-driven and easy to use.
 
