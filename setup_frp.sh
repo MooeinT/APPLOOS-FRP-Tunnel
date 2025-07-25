@@ -1,347 +1,352 @@
 #!/bin/bash
 
-# Define FRP version to install
-FRP_VERSION="0.59.0" # You can change this to a newer version if available
+ # ==================================================================================
+ #
+ #    APPLOOS FRP TUNNEL - Full Management Script (v23.0 - With XUI Port Protection)
+ #    Developed By: @AliTabari
+ #    Purpose: Automate the installation, configuration, and management of FRP.
+ #
+ # ==================================================================================
 
-# Define FRP installation directory
-INSTALL_DIR="/opt/frp"
+ # --- Static Configuration Variables ---
+ FRP_VERSION="0.59.0"
+ FRP_INSTALL_DIR="/opt/frp"
+ SYSTEMD_DIR="/etc/systemd/system"
+ FRP_TCP_CONTROL_PORT="7000"
+ FRP_QUIC_CONTROL_PORT="7001"
+ FRP_DASHBOARD_PORT="7500"
+ XUI_PANEL_PORT="54333" # Protected Port
 
-# Function to display error messages
-error_exit() {
-    echo "خطا: $1" >&2
-    exit 1
-}
+ # --- Color Codes ---
+ GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+ # --- Root Check ---
+ check_root() { if [[ $EUID -ne 0 ]]; then echo -e "${RED}ERROR: Must be run as root.${NC}"; exit 1; fi; }
 
-# Function to install dependencies
-install_dependencies() {
-    echo "در حال نصب پکیج های مورد نیاز..."
-    sudo apt update || error_exit "آپدیت پکیج ها با خطا مواجه شد."
-    sudo apt install -y curl unzip || error_exit "نصب curl و unzip با خطا مواجه شد."
-}
+ # --- Function to check installation status ---
+ check_install_status() {
+     if [ -f "${SYSTEMD_DIR}/frps.service" ] || [ -f "${SYSTEMD_DIR}/frpc.service" ]; then
+         echo -e "  FRP Status: ${GREEN}[ ✅ Installed ]${NC}"
+     else
+         echo -e "  FRP Status: ${RED}[ ❌ Not Installed ]${NC}"
+     fi
+ }
 
-# Function to download and install FRP
-install_frp() {
-    echo "در حال دانلود و نصب FRP نسخه ${FRP_VERSION}..."
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        "x86_64") FRP_ARCH="amd64" ;;
-        "aarch64") FRP_ARCH="arm64" ;;
-        "armv7l") FRP_ARCH="arm" ;;
-        "i386") FRP_ARCH="386" ;;
-        *) error_exit "معماری CPU شما (${ARCH}) پشتیبانی نمی شود." ;;
-    esac
+ # --- Input Functions (Updated with XUI Port Protection) ---
+ get_server_ips() {
+     read -p "Enter Public IP for IRAN Server (entry point): " IRAN_SERVER_IP
+     if [[ -z "$IRAN_SERVER_IP" ]]; then echo -e "${RED}IP cannot be empty.${NC}"; return 1; fi
+     read -p "Enter Public IP for FOREIGN Server (service host): " FOREIGN_SERVER_IP
+     if [[ -z "$FOREIGN_SERVER_IP" ]]; then echo -e "${RED}IP cannot be empty.${NC}"; return 1; fi
+     return 0
+ }
 
-    FRP_FILE="frp_${FRP_VERSION}_linux_${FRP_ARCH}.tar.gz"
-    FRP_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${FRP_FILE}"
-
-    if [ -d "${INSTALL_DIR}" ]; then
-        echo "پوشه FRP از قبل وجود دارد. در حال حذف و نصب مجدد..."
-        sudo rm -rf "${INSTALL_DIR}" || error_exit "خطا در حذف پوشه FRP قبلی."
-    fi
-
-    sudo mkdir -p "${INSTALL_DIR}" || error_exit "خطا در ساخت پوشه ${INSTALL_DIR}."
-    curl -L "${FRP_URL}" -o "/tmp/${FRP_FILE}" || error_exit "خطا در دانلود FRP."
-    sudo tar -xzf "/tmp/${FRP_FILE}" -C /tmp || error_exit "خطا در استخراج فایل FRP."
-    sudo cp /tmp/frp_${FRP_VERSION}_linux_${FRP_ARCH}/frpc "${INSTALL_DIR}/" || error_exit "خطا در کپی frpc."
-    sudo cp /tmp/frp_${FRP_VERSION}_linux_${FRP_ARCH}/frps "${INSTALL_DIR}/" || error_exit "خطا در کپی frps."
-    sudo rm -rf "/tmp/${FRP_FILE}" "/tmp/frp_${FRP_VERSION}_linux_${FRP_ARCH}" || error_exit "خطا در پاکسازی فایل های موقت."
-
-    echo "FRP با موفقیت نصب شد."
-}
-
-# Function to configure UFW firewall
-configure_ufw() {
-    echo "در حال تنظیم فایروال UFW..."
-    sudo ufw enable || sudo ufw --force enable
-    sudo ufw allow ssh comment "Allow SSH"
-    sudo ufw allow 7000/tcp comment "FRP Base TCP Port"
-    sudo ufw allow 7001/udp comment "FRP Base UDP/QUIC Port"
-    sudo ufw allow 7002/udp comment "FRP QUIC KCP Port (if used)"
-    sudo ufw allow 80/tcp comment "FRP HTTP Vhost"
-    sudo ufw allow 443/tcp comment "FRP HTTPS Vhost"
-    
-    # Example remote ports for various proxies (adjust as needed)
-    sudo ufw allow 6000/tcp comment "FRP Remote Port for TCP Proxy"
-    sudo ufw allow 6001/udp comment "FRP Remote Port for UDP Proxy"
-    sudo ufw allow 6002/udp comment "FRP Remote Port for QUIC Proxy"
-    sudo ufw allow 6003/tcp comment "FRP Remote Port for STCP Proxy"
-    sudo ufw allow 6004/udp comment "FRP Remote Port for SUDP Proxy"
-    sudo ufw allow 6005/udp comment "FRP Remote Port for XTCP Proxy"
-    
-    sudo ufw reload || error_exit "خطا در بارگذاری مجدد UFW."
-    echo "UFW با موفقیت تنظیم شد."
-}
-
-# Function to configure FRP Server (frps)
-configure_iran_server() {
-    echo "در حال پیکربندی سرور FRP (frps) در سرور ایران..."
-
-    read -p "لطفاً IP عمومی سرور ایران خود را وارد کنید: " IRAN_SERVER_IP
-    if [[ ! "$IRAN_SERVER_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        error_exit "آدرس IP نامعتبر است. لطفاً IP صحیح را وارد کنید."
-    fi
-
-    read -p "لطفاً توکن امنیتی (Authentication Token) برای FRP را وارد کنید (یک رشته قوی و تصادفی): " FRP_TOKEN
+get_frp_token() {
+    read -p "Please enter the Authentication Token for FRP (a strong, random string): " FRP_TOKEN
     if [ -z "$FRP_TOKEN" ]; then
-        error_exit "توکن امنیتی نمی تواند خالی باشد. لطفاً یک توکن وارد کنید."
+        echo -e "${RED}Authentication token cannot be empty. Please enter a token.${NC}"
+        return 1
     fi
+    return 0
+}
 
-    # Generate frps.ini
-    cat <<EOL > "${INSTALL_DIR}/frps.ini"
+ get_port_input() {
+     echo -e "\n${CYAN}Enter the TCP port(s) you want to tunnel (leave blank if none).${NC}"
+     read -p "TCP Ports (e.g., 8080, 20000-30000): " user_tcp_ports
+     if [[ "$user_tcp_ports" == *"$XUI_PANEL_PORT"* ]]; then
+         echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
+         return 1
+     fi
+     if [[ -n "$user_tcp_ports" && ! "$user_tcp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid TCP port format.${NC}"; return 1; fi
+
+     echo -e "\n${CYAN}Enter the UDP port(s) you want to tunnel (leave blank if none).${NC}"
+     read -p "UDP Ports (e.g., 500, 4500): " user_udp_ports
+     if [[ "$user_udp_ports" == *"$XUI_PANEL_PORT"* ]]; then
+         echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
+         return 1
+     fi
+     if [[ -n "$user_udp_ports" && ! "$user_udp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid UDP port format.${NC}"; return 1; fi
+
+     # Allowing HTTP/HTTPS ports for direct tunneling if user wants.
+     echo -e "\n${CYAN}Do you want to tunnel HTTP (port 80) and HTTPS (port 443)? [y/N]: ${NC}"
+     read -p "Enter choice [y/N]: " http_https_choice
+     if [[ "$http_https_choice" =~ ^[Yy]$ ]]; then
+         HTTP_HTTPS_TUNNEL="true"
+     else
+         HTTP_HTTPS_TUNNEL="false"
+     fi
+
+     # Ask for domain for HTTP/HTTPS vhost if chosen
+     if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then
+         read -p "Enter your domain/subdomain for HTTP/HTTPS Vhost (e.g., frp.yourdomain.com): " FRP_DOMAIN
+         if [[ -z "$FRP_DOMAIN" ]]; then
+             echo -e "${RED}Domain cannot be empty for HTTP/HTTPS Vhost.${NC}"
+             return 1
+         fi
+     fi
+
+     if [[ -z "$user_tcp_ports" && -z "$user_udp_ports" && "$HTTP_HTTPS_TUNNEL" != "true" ]]; then echo -e "${RED}You must enter at least one TCP or UDP port, or enable HTTP/HTTPS tunneling.${NC}"; return 1; fi
+
+     FRP_TCP_PORTS_FRP=$user_tcp_ports; FRP_TCP_PORTS_UFW=${user_tcp_ports//-/:}
+     FRP_UDP_PORTS_FRP=$user_udp_ports; FRP_UDP_PORTS_UFW=${user_udp_ports//-/:}
+     return 0
+ }
+
+ get_protocol_choice() {
+     echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}\n  1. TCP (Standard)\n  2. QUIC (Recommended for latency)\n  3. STCP (Secret TCP - for private, encrypted TCP tunnels)\n  4. SUDP (Secret UDP - for private, encrypted UDP tunnels)\n  5. XTCP (P2P Connect - experimental direct client-to-client connection)"
+     read -p "Enter choice [1-5]: " proto_choice
+     FRP_PROTOCOL="tcp" # Default
+     case "$proto_choice" in
+         "1") FRP_PROTOCOL="tcp" ;;
+         "2") FRP_PROTOCOL="quic" ;;
+         "3") FRP_PROTOCOL="stcp" ;;
+         "4") FRP_PROTOCOL="sudp" ;;
+         "5") FRP_PROTOCOL="xtcp" ;;
+         *) echo -e "${RED}Invalid protocol choice. Defaulting to TCP.${NC}";;
+     esac
+
+     TCP_MUX="false"
+     if [[ "$FRP_PROTOCOL" == "tcp" || "$FRP_PROTOCOL" == "stcp" ]]; then # TCP MUX generally applies to TCP-based protocols
+         read -p $'\n'"Enable TCP Multiplexer (tcpmux) for better performance? [y/N]: " mux_choice
+         if [[ "$mux_choice" =~ ^[Yy]$ ]]; then TCP_MUX="true"; fi
+     fi
+     return 0
+ }
+
+ # --- Core Logic Functions ---
+ stop_frp_processes() {
+     killall frps > /dev/null 2>&1 || true; killall frpc > /dev/null 2>&1 || true
+     systemctl stop frps.service > /dev/null 2>&1; systemctl stop frpc.service > /dev/null 2>&1
+ }
+ download_and_extract() {
+     rm -rf ${FRP_INSTALL_DIR}; mkdir -p ${FRP_INSTALL_DIR}
+     FRP_TAR_FILE="frp_${FRP_VERSION}_linux_amd64.tar.gz" # Assuming amd64 for simplicity, can be dynamic
+     wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${FRP_TAR_FILE}" -O "${FRP_TAR_FILE}"
+     tar -zxvf "${FRP_TAR_FILE}" -C "${FRP_INSTALL_DIR}" --strip-components=1
+     rm "${FRP_TAR_FILE}"
+ }
+ setup_iran_server() {
+     get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
+     echo -e "\n${YELLOW}--- Setting up Iran Server (frps) ---${NC}"; stop_frp_processes; download_and_extract
+     cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
 [common]
 bind_addr = 0.0.0.0
-bind_port = 7000           # Default port for TCP
-bind_udp_port = 7001       # Default port for UDP and QUIC
-kcp_bind_port = 7002       # Default port for QUIC (if bind_udp_port is not sufficient)
-vhost_http_port = 80       # Port for HTTP
-vhost_https_port = 443     # Port for HTTPS
-tcp_mux = true             # Enable TCP Multiplexing
+bind_port = ${FRP_TCP_CONTROL_PORT}
+bind_udp_port = ${FRP_QUIC_CONTROL_PORT} # Used for UDP and QUIC
+kcp_bind_port = ${FRP_QUIC_CONTROL_PORT} # Often same as bind_udp_port for QUIC
+vhost_http_port = 80
+vhost_https_port = 443
 
 authentication_method = token
 token = ${FRP_TOKEN}
 
 dashboard_addr = 0.0.0.0
-dashboard_port = 7500
+dashboard_port = ${FRP_DASHBOARD_PORT}
 dashboard_user = admin
-dashboard_pwd = PASSWORD_FRP_123 # Default password for dashboard (CHANGE THIS!)
+dashboard_pwd = PASSWORD_FRP_123 # IMPORTANT: CHANGE THIS PASSWORD IMMEDIATELY!
 
-log_file = /var/log/frps.log
-log_level = info
-log_max_days = 3
-EOL
+tcp_mux = ${TCP_MUX}
 
-    echo "فایل ${INSTALL_DIR}/frps.ini با موفقیت ایجاد شد."
+# log_file = /var/log/frps.log
+# log_level = info
+# log_max_days = 3
+EOF
+     echo -e "${YELLOW}--> Setting up firewall...${NC}"
+     sudo ufw allow ${FRP_TCP_CONTROL_PORT}/tcp comment "FRP TCP Control" > /dev/null
+     sudo ufw allow ${FRP_QUIC_CONTROL_PORT}/udp comment "FRP UDP/QUIC Control" > /dev/null
+     sudo ufw allow ${FRP_DASHBOARD_PORT}/tcp comment "FRP Dashboard" > /dev/null
 
-    # Create systemd service file for frps
-    sudo cp /dev/null /etc/systemd/system/frps.service
-    cat <<EOL | sudo tee /etc/systemd/system/frps.service > /dev/null
+     if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then
+        sudo ufw allow 80/tcp comment "FRP HTTP Vhost" > /dev/null
+        sudo ufw allow 443/tcp comment "FRP HTTPS Vhost" > /dev/null
+     fi
+
+     # Allow user-specified TCP/UDP ports
+     if [ -n "$FRP_TCP_PORTS_UFW" ]; then
+         OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_TCP_PORTS_UFW"; IFS=$OLD_IFS;
+         for port in "${PORTS_ARRAY[@]}"; do
+             sudo ufw allow "$port"/tcp comment "FRP Tunneled TCP" > /dev/null
+         done
+     fi
+     if [ -n "$FRP_UDP_PORTS_UFW" ]; then
+         OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_UDP_PORTS_UFW"; IFS=$OLD_IFS;
+         for port in "${PORTS_ARRAY[@]}"; do
+             sudo ufw allow "$port"/udp comment "FRP Tunneled UDP" > /dev/null
+         done
+     fi
+     sudo ufw reload > /dev/null
+
+     cat > ${SYSTEMD_DIR}/frps.service << EOF
 [Unit]
-Description = FRP Server (frps)
-After = network.target
+Description=FRP Server (frps)
+After=network.target
 
 [Service]
-Type = simple
-ExecStart = ${INSTALL_DIR}/frps -c ${INSTALL_DIR}/frps.ini
-Restart = on-failure
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+ExecStart=${FRP_INSTALL_DIR}/frps -c ${FRP_INSTALL_DIR}/frps.ini
 
 [Install]
-WantedBy = multi-user.target
-EOL
+WantedBy=multi-user.target
+EOF
+     systemctl daemon-reload; systemctl enable frps.service > /dev/null; systemctl restart frps.service
+     echo -e "\n${GREEN}SUCCESS! Iran Server setup is complete.${NC}"
+ }
 
-    sudo systemctl daemon-reload || error_exit "خطا در بارگذاری مجدد daemon systemd."
-    sudo systemctl enable frps.service || error_exit "خطا در فعال سازی frps.service."
-    sudo systemctl start frps.service || error_exit "خطا در راه اندازی frps.service."
-    echo "سرویس frps با موفقیت نصب و راه اندازی شد."
-    echo "---------------------------------------------------"
-    echo "پیکربندی سرور ایران (frps) با موفقیت به پایان رسید."
-    echo "داشبورد مدیریت FRP در پورت 7500 با یوزر 'admin' و پسورد 'PASSWORD_FRP_123' در دسترس است."
-    echo "توصیه می شود پسورد داشبورد را بلافاخته تغییر دهید!"
-    echo "و از یک توکن امنیتی قوی تر برای FRP استفاده کنید."
-    echo "---------------------------------------------------"
-}
-
-# Function to configure FRP Client (frpc)
-configure_foreign_server() {
-    echo "در حال پیکربندی کلاینت FRP (frpc) در سرور خارجی..."
-
-    read -p "لطفاً IP عمومی سرور ایران خود را وارد کنید: " SERVER_ADDR
-    if [[ ! "$SERVER_ADDR" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        error_exit "آدرس IP نامعتبر است. لطفاً IP صحیح را وارد کنید."
-    fi
-
-    read -p "لطفاً توکن امنیتی (Authentication Token) که در سرور ایران تنظیم کردید را وارد کنید: " FRP_TOKEN
-    if [ -z "$FRP_TOKEN" ]; then
-        error_exit "توکن امنیتی نمی تواند خالی باشد. لطفاً توکن را وارد کنید."
-    fi
-
-    read -p "لطفاً نام دامنه (FQDN) خود را وارد کنید (مثال: example.com): " CUSTOM_DOMAIN
-    if [ -z "$CUSTOM_DOMAIN" ]; then
-        error_exit "نام دامنه نمی تواند خالی باشد."
-    fi
-
-    # Generate frpc.ini
-    cat <<EOL > "${INSTALL_DIR}/frpc.ini"
+ setup_foreign_server() {
+     get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
+     echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"; stop_frp_processes; download_and_extract
+     cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
-server_addr = ${SERVER_ADDR}
-server_port = 7000           # Must be the same as bind_port in frps.ini
-protocol = tcp               # Main connection protocol to the server (tcp, udp, quic)
-tcp_mux = true               # Enable TCP Multiplexing
-
+server_addr = ${IRAN_SERVER_IP}
+server_port = ${FRP_TCP_CONTROL_PORT} # Default to TCP control port
+protocol = tcp                         # Default protocol
 authentication_method = token
 token = ${FRP_TOKEN}
+tcp_mux = ${TCP_MUX}
 
-log_file = /var/log/frpc.log
-log_level = info
-log_max_days = 3
+# log_file = /var/log/frpc.log
+# log_level = info
+# log_max_days = 3
+EOF
 
-# --- Sample Proxies ---
-# You can enable or disable these proxies based on your needs.
-# Each proxy must have a unique name (e.g., [ssh_proxy]).
+    # Adjust server_port and protocol based on chosen protocol
+    case $FRP_PROTOCOL in
+        "quic")
+            sed -i "s/server_port = ${FRP_TCP_CONTROL_PORT}/server_port = ${FRP_QUIC_CONTROL_PORT}/" ${FRP_INSTALL_DIR}/frpc.ini
+            sed -i "/protocol = tcp/c\protocol = quic" ${FRP_INSTALL_DIR}/frpc.ini
+            ;;
+        "stcp"|"sudp"|"xtcp")
+            # For secret protocols, the common server_port remains the control port.
+            # The actual remote_port for the secret tunnel will be defined below.
+            # Add specific protocol setup if needed beyond just type.
+            ;;
+    esac
 
-# TCP Proxy Example (e.g., for SSH or RDP)
-[tcp_proxy_example]
+     if [ -n "$FRP_TCP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[range:tcp_proxies]
 type = tcp
 local_ip = 127.0.0.1
-local_port = 22             # Local service port (e.g., SSH)
-remote_port = 6000          # Port opened on the Iran server (for public access)
-use_compression = true      # Data compression
-# use_encryption = true     # Data encryption (optional)
+local_port = ${FRP_TCP_PORTS_FRP}
+remote_port = ${FRP_TCP_PORTS_FRP}
+EOF
+     fi
 
-# UDP Proxy Example (e.g., for DNS or UDP VPN)
-[udp_proxy_example]
+     if [ -n "$FRP_UDP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[range:udp_proxies]
 type = udp
 local_ip = 127.0.0.1
-local_port = 53             # Local service port (e.g., DNS)
-remote_port = 6001          # Port opened on the Iran server
-use_compression = true
+local_port = ${FRP_UDP_PORTS_FRP}
+remote_port = ${FRP_UDP_PORTS_FRP}
+EOF
+     fi
 
-# QUIC Proxy Example (for better performance on unstable networks)
-[quic_proxy_example]
-type = quic
-local_ip = 127.0.0.1
-local_port = 8080           # Local service port
-remote_port = 6002          # Port opened on the Iran server
-# Note: For full QUIC utilization, the 'protocol' in [common] should also be set to 'quic'.
+     if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
-# HTTP Proxy Example (for web servers)
-[http_proxy_example]
+[http_proxy]
 type = http
 local_ip = 127.0.0.1
-local_port = 80             # Local HTTP web server port
-custom_domains = ${CUSTOM_DOMAIN} # Your domain pointing to the Iran server via Cloudflare
-# Or use subdomain:
-# subdomain = myweb
+local_port = 80
+custom_domains = ${FRP_DOMAIN}
 
-# HTTPS Proxy Example (for secure web servers)
-[https_proxy_example]
+[https_proxy]
 type = https
 local_ip = 127.0.0.1
-local_port = 443            # Local HTTPS web server port
-custom_domains = ${CUSTOM_DOMAIN} # Your domain pointing to the Iran server via Cloudflare
-# Or use subdomain:
-# subdomain = mysecureweb
+local_port = 443
+custom_domains = ${FRP_DOMAIN}
+EOF
+     fi
 
-# STCP Proxy Example (Secret TCP - for secure and private tunnels)
-[stcp_proxy_example]
+    # Add specific blocks for STCP, SUDP, XTCP if chosen
+    if [[ "$FRP_PROTOCOL" == "stcp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[stcp_tunnel]
 type = stcp
 local_ip = 127.0.0.1
-local_port = 3389           # Local service port (e.g., RDP)
-remote_port = 6003          # Port opened on the Iran server
-sk = MY_STCP_SECRET_KEY_123 # A shared secret key (MUST CHANGE THIS!)
-# To connect to this proxy, the client must use 'frpc visitor' with this 'sk'.
+local_port = 22 # Example: Tunnel SSH
+remote_port = 6003 # Example: Remote port on Iran server
+sk = YOUR_STCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
+EOF
+    fi
 
-# SUDP Proxy Example (Secret UDP - for secure and private UDP tunnels)
-[sudp_proxy_example]
+    if [[ "$FRP_PROTOCOL" == "sudp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[sudp_tunnel]
 type = sudp
 local_ip = 127.0.0.1
-local_port = 1194           # Local service port (e.g., OpenVPN UDP)
-remote_port = 6004          # Port opened on the Iran server
-sk = MY_SUDP_SECRET_KEY_456 # A shared secret key (MUST CHANGE THIS!)
-# To connect to this proxy, the client must use 'frpc visitor' with this 'sk'.
+local_port = 53 # Example: Tunnel DNS
+remote_port = 6004 # Example: Remote port on Iran server
+sk = YOUR_SUDP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
+EOF
+    fi
 
-# XTCP Proxy Example (P2P Connect - for direct client-to-client communication)
-[xtcp_proxy_example]
+    if [[ "$FRP_PROTOCOL" == "xtcp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[xtcp_tunnel]
 type = xtcp
 local_ip = 127.0.0.1
-local_port = 5900           # Local service port (e.g., VNC)
-remote_port = 6005          # Port opened on the Iran server
-sk = MY_XTCP_SECRET_KEY_789 # A shared secret key (MUST CHANGE THIS!)
-# To connect to this proxy, the client must use 'frpc visitor' with this 'sk'.
-EOL
+local_port = 5900 # Example: Tunnel VNC
+remote_port = 6005 # Example: Remote port on Iran server
+sk = YOUR_XTCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
+EOF
+    fi
 
-    echo "فایل ${INSTALL_DIR}/frpc.ini با موفقیت ایجاد شد."
 
-    # Create systemd service file for frpc
-    sudo cp /dev/null /etc/systemd/system/frpc.service
-    cat <<EOL | sudo tee /etc/systemd/system/frpc.service > /dev/null
+     cat > ${SYSTEMD_DIR}/frpc.service << EOF
 [Unit]
-Description = FRP Client (frpc)
-After = network.target
+Description=FRP Client (frpc)
+After=network.target
 
 [Service]
-Type = simple
-ExecStart = ${INSTALL_DIR}/frpc -c ${INSTALL_DIR}/frpc.ini
-Restart = on-failure
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+ExecStart=${FRP_INSTALL_DIR}/frpc -c ${FRP_INSTALL_DIR}/frpc.ini
 
 [Install]
-WantedBy = multi-user.target
-EOL
+WantedBy=multi-user.target
+EOF
+     systemctl daemon-reload; systemctl enable frpc.service > /dev/null; systemctl restart frpc.service
+     echo -e "\n${GREEN}SUCCESS! Foreign Server setup is complete.${NC}"
+ }
+ uninstall_frp() {
+     echo -e "\n${YELLOW}Uninstalling FRP...${NC}"; stop_frp_processes
+     systemctl disable frps.service > /dev/null 2>&1; systemctl disable frpc.service > /dev/null 2>&1
+     rm -f ${SYSTEMD_DIR}/frps.service; rm -f ${SYSTEMD_DIR}/frpc.service
+     systemctl daemon-reload; rm -rf ${FRP_INSTALL_DIR}
+     echo -e "${YELLOW}Note: Firewall rules must be removed manually.${NC}"
+     echo -e "\n${GREEN}SUCCESS! FRP has been uninstalled.${NC}"
+ }
 
-    sudo systemctl daemon-reload || error_exit "خطا در بارگذاری مجدد daemon systemd."
-    sudo systemctl enable frpc.service || error_exit "خطا در فعال سازی frpc.service."
-    sudo systemctl start frpc.service || error_exit "خطا در راه اندازی frpc.service."
-    echo "سرویس frpc با موفقیت نصب و راه اندازی شد."
-    echo "---------------------------------------------------"
-    echo "پیکربندی سرور خارجی (frpc) با موفقیت به پایان رسید."
-    echo "---------------------------------------------------"
-}
+ # --- Main Menu Display and Logic ---
+ main_menu() {
+     while true; do
+         clear
+         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
+         echo "================================================="; echo -e "     ${CYAN}APPLOOS FRP TUNNEL${NC} - v23.0"; echo "================================================="
+         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
+         check_install_status
+         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
+         read -p "Enter your choice [1-3]: " choice
+         case $choice in
+             1)
+                 echo -e "\n${CYAN}Which machine is this?${NC}"; echo "  1. This is the IRAN Server (Public Entry)"; echo "  2. This is the FOREIGN Server (Service Host)"
+                 read -p "Enter choice [1-2]: " setup_choice
+                 if [[ "$setup_choice" == "1" ]]; then setup_iran_server; elif [[ "$setup_choice" == "2" ]]; then setup_foreign_server; else echo -e "${RED}Invalid choice.${NC}"; fi
+                 ;;
+             2) uninstall_frp ;;
+             3) echo -e "${YELLOW}Exiting.${NC}"; exit 0 ;;
+             *) echo -e "${RED}Invalid choice.${NC}"; sleep 2 ;;
+         esac
+         echo -e "\n${CYAN}Operation complete. Press [Enter] to return to menu...${NC}"; read
+     done
+ }
 
-# Main script logic
-clear
-echo "---------------------------------------------------"
-echo "           FRP Setup Script (Version 1.0)          "
-echo "---------------------------------------------------"
-echo "این اسکریپت FRP را نصب و پیکربندی می کند."
-echo "شما می توانید سرور (Iran) یا کلاینت (Foreign) را انتخاب کنید."
-echo ""
-echo "گزینه ها:"
-echo "1. نصب/پیکربندی تونل FRP"
-echo "2. حذف FRP"
-echo "3. خروج"
-read -p "لطفاً گزینه مورد نظر خود را وارد کنید [1-3]: " main_choice
-
-case "$main_choice" in
-    1)
-        clear
-        echo "---------------------------------------------------"
-        echo "      نصب/پیکربندی تونل FRP      "
-        echo "---------------------------------------------------"
-        echo "1. این سرور ایران است (Public Entry)"
-        echo "2. این سرور خارجی است (Service Host)"
-        read -p "لطفاً گزینه مورد نظر خود را وارد کنید [1-2]: " server_type_choice
-
-        install_dependencies
-        install_frp
-
-        case "$server_type_choice" in
-            1)
-                configure_ufw
-                configure_iran_server
-                ;;
-            2)
-                configure_foreign_server
-                ;;
-            *)
-                error_exit "انتخاب نامعتبر. لطفاً 1 یا 2 را وارد کنید."
-                ;;
-        esac
-        ;;
-    2)
-        echo "در حال حذف FRP..."
-        sudo systemctl stop frps.service 2>/dev/null
-        sudo systemctl disable frps.service 2>/dev/null
-        sudo rm /etc/systemd/system/frps.service 2>/dev/null
-        sudo systemctl stop frpc.service 2>/dev/null
-        sudo systemctl disable frpc.service 2>/dev/null
-        sudo rm /etc/systemd/system/frpc.service 2>/dev/null
-        sudo rm -rf "${INSTALL_DIR}"
-        sudo rm /var/log/frps.log 2>/dev/null
-        sudo rm /var/log/frpc.log 2>/dev/null
-        sudo systemctl daemon-reload
-        echo "FRP با موفقیت حذف شد."
-        ;;
-    3)
-        echo "خروج."
-        exit 0
-        ;;
-    *)
-        error_exit "انتخاب نامعتبر. لطفاً 1، 2 یا 3 را وارد کنید."
-        ;;
-esac
-
-echo "پایان عملیات اسکریپت."
+ # --- Script Start ---
+ check_root
+ main_menu
