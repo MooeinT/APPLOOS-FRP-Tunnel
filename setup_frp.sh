@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v20.0 - Simplified)
+#   APPLOOS FRP TUNNEL - Full Management Script (v16.0 - Final Log Fixes)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -22,7 +22,7 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 # --- Root Check ---
 check_root() { if [[ $EUID -ne 0 ]]; then echo -e "${RED}ERROR: Must be run as root.${NC}"; exit 1; fi; }
 
-# --- New function to check installation status ---
+# --- Function to check installation status ---
 check_install_status() {
     if [ -f "${SYSTEMD_DIR}/frps.service" ] || [ -f "${SYSTEMD_DIR}/frpc.service" ]; then
         echo -e "  FRP Status: ${GREEN}[ ✅ Installed ]${NC}"
@@ -66,31 +66,47 @@ download_and_extract() {
 setup_iran_server() {
     get_server_ips && get_port_input && get_protocol_choice || return 1
     echo -e "\n${YELLOW}--- Setting up Iran Server (frps) ---${NC}"; stop_frp_processes; download_and_extract
+    
+    echo -e "${YELLOW}--> Creating frps.ini...${NC}"
     if [ "$FRP_PROTOCOL" == "quic" ]; then
         cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
 [common]
 quic_bind_port = ${FRP_QUIC_CONTROL_PORT}
-dashboard_addr = 0.0.0.0; dashboard_port = ${FRP_DASHBOARD_PORT}
-dashboard_user = admin; dashboard_pwd = FRP_PASSWORD_123
+dashboard_addr = 0.0.0.0
+dashboard_port = ${FRP_DASHBOARD_PORT}
+dashboard_user = admin
+dashboard_pwd = FRP_PASSWORD_123
 EOF
     else
         cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
 [common]
 bind_port = ${FRP_TCP_CONTROL_PORT}
-dashboard_addr = 0.0.0.0; dashboard_port = ${FRP_DASHBOARD_PORT}
-dashboard_user = admin; dashboard_pwd = FRP_PASSWORD_123
+dashboard_addr = 0.0.0.0
+dashboard_port = ${FRP_DASHBOARD_PORT}
+dashboard_user = admin
+dashboard_pwd = FRP_PASSWORD_123
 EOF
     fi
+
+    echo -e "${YELLOW}--> Setting up firewall...${NC}"
     if [ "$FRP_PROTOCOL" == "quic" ]; then ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null; else ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi
     ufw allow ${FRP_DASHBOARD_PORT}/tcp > /dev/null
     OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_TUNNEL_PORTS_UFW"; IFS=$OLD_IFS
     for port in "${PORTS_ARRAY[@]}"; do ufw allow "$port"/tcp > /dev/null; done; ufw reload > /dev/null
+
+    echo -e "${YELLOW}--> Creating systemd service...${NC}"
     cat > ${SYSTEMD_DIR}/frps.service << EOF
 [Unit]
-Description=FRP Server (frps); After=network.target
+Description=FRP Server (frps)
+After=network.target
+
 [Service]
-Type=simple; User=root; Restart=on-failure; RestartSec=5s
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
 ExecStart=${FRP_INSTALL_DIR}/frps -c ${FRP_INSTALL_DIR}/frps.ini
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -100,27 +116,48 @@ EOF
 setup_foreign_server() {
     get_server_ips && get_port_input && get_protocol_choice || return 1
     echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"; stop_frp_processes; download_and_extract
+    
+    echo -e "${YELLOW}--> Creating frpc.ini...${NC}"
     if [ "$FRP_PROTOCOL" == "quic" ]; then
         cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
-server_addr = ${IRAN_SERVER_IP}; server_port = ${FRP_QUIC_CONTROL_PORT}; protocol = quic
+server_addr = ${IRAN_SERVER_IP}
+server_port = ${FRP_QUIC_CONTROL_PORT}
+protocol = quic
+
 [range:vless-tcp]
-type = tcp; local_ip = 127.0.0.1; local_port = ${FRP_TUNNEL_PORTS_FRP}; remote_port = ${FRP_TUNNEL_PORTS_FRP}
+type = tcp
+local_ip = 127.0.0.1
+local_port = ${FRP_TUNNEL_PORTS_FRP}
+remote_port = ${FRP_TUNNEL_PORTS_FRP}
 EOF
     else
         cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
-server_addr = ${IRAN_SERVER_IP}; server_port = ${FRP_TCP_CONTROL_PORT}
+server_addr = ${IRAN_SERVER_IP}
+server_port = ${FRP_TCP_CONTROL_PORT}
+
 [range:vless-tcp]
-type = tcp; local_ip = 127.0.0.1; local_port = ${FRP_TUNNEL_PORTS_FRP}; remote_port = ${FRP_TUNNEL_PORTS_FRP}
+type = tcp
+local_ip = 127.0.0.1
+local_port = ${FRP_TUNNEL_PORTS_FRP}
+remote_port = ${FRP_TUNNEL_PORTS_FRP}
 EOF
     fi
+
+    echo -e "${YELLOW}--> Creating systemd service...${NC}"
     cat > ${SYSTEMD_DIR}/frpc.service << EOF
 [Unit]
-Description=FRP Client (frpc); After=network.target
+Description=FRP Client (frpc)
+After=network.target
+
 [Service]
-Type=simple; User=root; Restart=on-failure; RestartSec=5s
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
 ExecStart=${FRP_INSTALL_DIR}/frpc -c ${FRP_INSTALL_DIR}/frpc.ini
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -135,29 +172,40 @@ uninstall_frp() {
     echo -e "\n${GREEN}SUCCESS! FRP has been uninstalled.${NC}"
 }
 
+# --- Simplified Optimization Menu ---
+show_optimization_menu() {
+    while true; do
+        clear; echo "================================================="; echo -e "      ${CYAN}Network Optimizations Menu${NC}"; echo "================================================="
+        local current_congestion_control=$(sysctl -n net.ipv4.tcp_congestion_control); echo -e "Current Algorithm: ${YELLOW}${current_congestion_control}${NC}"
+        echo "-------------------------------------------------"; echo "1. Install BBR"; echo "2. Remove BBR"; echo "---"
+        echo "3. Install Cubic (Linux Default)"; echo "4. Remove Cubic"; echo "---"; echo "5. Back to Main Menu"
+        echo "-------------------------------------------------"; read -p "Enter your choice [1-5]: " opt_choice
+        case $opt_choice in 1) install_bbr; ;; 2) remove_bbr; ;; 3) install_cubic; ;; 4) remove_cubic; ;; 5) break ;; *) echo -e "${RED}Invalid choice.${NC}";; esac
+        echo -e "${CYAN}Operation complete. Press [Enter]...${NC}"; read -n 1;
+    done
+}
+install_bbr() { sed -i '/net.ipv4.tcp_congestion_control\|net.core.default_qdisc/d' /etc/sysctl.conf; echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf; echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> BBR enabled.${NC}"; }
+remove_bbr() { sed -i '/net.ipv4.tcp_congestion_control=bbr\|net.core.default_qdisc=fq/d' /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> BBR removed.${NC}"; }
+install_cubic() { sed -i '/net.ipv4.tcp_congestion_control\|net.core.default_qdisc/d' /etc/sysctl.conf; echo "net.ipv4.tcp_congestion_control=cubic" >> /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> Cubic enabled.${NC}"; }
+remove_cubic() { sed -i '/net.ipv4.tcp_congestion_control=cubic/d' /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> Cubic setting removed.${NC}"; }
+
 # --- Main Menu Display and Logic ---
 main_menu() {
     while true; do
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="
-        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v20.0"
-        echo "================================================="
-        echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
-        echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v16.0"; echo "================================================="
+        echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
-        echo "-------------------------------------------------"
-        echo "  1. Setup this machine as IRAN Server (frps)"
-        echo "  2. Setup this machine as FOREIGN Server (frpc)"
-        echo "  3. UNINSTALL FRP from this machine"
-        echo "  4. Exit"
-        echo "-------------------------------------------------"
-        read -p "Enter your choice [1-4]: " choice
+        echo "-------------------------------------------------"; echo "  1. Setup IRAN Server (frps)"; echo "  2. Setup FOREIGN Server (frpc)"
+        echo "  3. UNINSTALL FRP"; echo "  4. Network Optimizations Menu"; echo "  5. Exit"; echo "-------------------------------------------------"
+        read -p "Enter your choice [1-5]: " choice
         case $choice in
             1) setup_iran_server; echo -e "\n${CYAN}Press [Enter]...${NC}"; read ;;
             2) setup_foreign_server; echo -e "\n${CYAN}Press [Enter]...${NC}"; read ;;
             3) uninstall_frp; echo -e "\n${CYAN}Press [Enter]...${NC}"; read ;;
-            4) echo -e "${YELLOW}Exiting.${NC}"; exit 0 ;;
+            4) show_optimization_menu ;;
+            5) echo -e "${YELLOW}Exiting.${NC}"; exit 0 ;;
             *) echo -e "${RED}Invalid choice.${NC}"; sleep 2 ;;
         esac
     done
