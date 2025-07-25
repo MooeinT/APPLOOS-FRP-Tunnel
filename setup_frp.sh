@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v11.0 - Persistent Menus)
+#   APPLOOS FRP TUNNEL - Full Management Script (v12.0 - Final Menu Fix)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -15,7 +15,6 @@ SYSTEMD_DIR="/etc/systemd/system"
 FRP_TCP_CONTROL_PORT="7000"
 FRP_QUIC_CONTROL_PORT="7001"
 FRP_DASHBOARD_PORT="7500"
-OPTIMIZATIONS_FILE="/etc/sysctl.d/99-network-optimizations.conf"
 
 # --- Color Codes for beautiful output ---
 GREEN='\033[0;32m'
@@ -32,21 +31,22 @@ check_root() {
     fi
 }
 
-# --- All other functions are included here for a complete script ---
+# --- Input and Helper Functions ---
 
 get_server_ips() {
     echo -e "${CYAN}Please provide the IP addresses for the tunnel setup.${NC}"
     read -p "Enter the Public IP for the IRAN Server (the entry point): " IRAN_SERVER_IP
-    if [[ -z "$IRAN_SERVER_IP" ]]; then echo -e "${RED}IP cannot be empty. Exiting.${NC}"; exit 1; fi
+    if [[ -z "$IRAN_SERVER_IP" ]]; then echo -e "${RED}IP cannot be empty.${NC}"; return 1; fi
+
     read -p "Enter the Public IP for the FOREIGN Server (where services are): " FOREIGN_SERVER_IP
-    if [[ -z "$FOREIGN_SERVER_IP" ]]; then echo -e "${RED}IP cannot be empty. Exiting.${NC}"; exit 1; fi
+    if [[ -z "$FOREIGN_SERVER_IP" ]]; then echo -e "${RED}IP cannot be empty.${NC}"; return 1; fi
 }
 
 get_port_input() {
     echo -e "\n${CYAN}Please enter the port(s) you want to tunnel.${NC}"
     read -p "Examples: 8080, 20000-30000. Enter ports: " user_ports
-    if [[ -z "$user_ports" ]]; then echo -e "${RED}No ports entered. Exiting.${NC}"; exit 1; fi
-    if ! [[ "$user_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid format.${NC}"; exit 1; fi
+    if [[ -z "$user_ports" ]]; then echo -e "${RED}No ports entered.${NC}"; return 1; fi
+    if ! [[ "$user_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid format.${NC}"; return 1; fi
     FRP_TUNNEL_PORTS_FRP=$user_ports
     FRP_TUNNEL_PORTS_UFW=${user_ports//-/:}
 }
@@ -76,8 +76,14 @@ download_and_extract() {
     rm "${FRP_TAR_FILE}"
 }
 
+# --- Core Logic Functions ---
+
 setup_iran_server() {
-    get_server_ips; get_port_input; get_protocol_choice
+    # Check if input functions succeed. If not, return to main menu.
+    get_server_ips || return 1
+    get_port_input || return 1
+    get_protocol_choice || return 1
+
     echo -e "\n${YELLOW}--- Starting Full Setup for Iran Server (frps) ---${NC}"
     stop_frp_processes; download_and_extract
     
@@ -129,7 +135,11 @@ EOF
 }
 
 setup_foreign_server() {
-    get_server_ips; get_port_input; get_protocol_choice
+    # Check if input functions succeed. If not, return to main menu.
+    get_server_ips || return 1
+    get_port_input || return 1
+    get_protocol_choice || return 1
+
     echo -e "\n${YELLOW}--- Starting Full Setup for Foreign Server (frpc) ---${NC}"
     stop_frp_processes; download_and_extract
     
@@ -180,13 +190,12 @@ uninstall_frp() {
     echo -e "\n${GREEN}SUCCESS! FRP has been uninstalled.${NC}"
 }
 
+# --- Optimization Menu and Functions ---
 install_bbr() { sed -i '/net.ipv4.tcp_congestion_control\|net.core.default_qdisc/d' /etc/sysctl.conf; echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf; echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> BBR enabled.${NC}"; }
 remove_bbr() { sed -i '/net.ipv4.tcp_congestion_control=bbr\|net.core.default_qdisc=fq/d' /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> BBR removed.${NC}"; }
 install_cubic() { sed -i '/net.ipv4.tcp_congestion_control\|net.core.default_qdisc/d' /etc/sysctl.conf; echo "net.ipv4.tcp_congestion_control=cubic" >> /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> Cubic enabled.${NC}"; }
 remove_cubic() { sed -i '/net.ipv4.tcp_congestion_control=cubic/d' /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> Cubic setting removed.${NC}"; }
-
 show_optimization_menu() {
-    # This function now loops until the user chooses to exit.
     while true; do
         clear
         echo "================================================="
@@ -195,36 +204,25 @@ show_optimization_menu() {
         local current_congestion_control=$(sysctl -n net.ipv4.tcp_congestion_control)
         echo -e "Current Algorithm: ${YELLOW}${current_congestion_control}${NC}"
         echo "-------------------------------------------------"
-        echo "1. Install BBR"
-        echo "2. Remove BBR (Reverts to system default)"
-        echo "3. Install Cubic (Linux Default)"
-        echo "4. Remove Cubic (Reverts to system default)"
-        echo "5. Back to Main Menu"
+        echo "1. Install BBR"; echo "2. Remove BBR"; echo "---"
+        echo "3. Install Cubic (Linux Default)"; echo "4. Remove Cubic"; echo "---"; echo "5. Back to Main Menu"
         echo "-------------------------------------------------"
         read -p "Enter your choice [1-5]: " opt_choice
-
         case $opt_choice in
-            1) install_bbr ;;
-            2) remove_bbr ;;
-            3) install_cubic ;;
-            4) remove_cubic ;;
-            5) break ;; # This breaks the while loop and returns to the main menu
-            *) echo -e "${RED}Invalid choice.${NC}"; sleep 1 ;;
-        esac
-        echo -e "${CYAN}Operation complete. Press [Enter] to continue...${NC}"
-        read -n 1
+            1) install_bbr; ;; 2) remove_bbr; ;; 3) install_cubic; ;;
+            4) remove_cubic; ;; 5) break ;; *) echo -e "${RED}Invalid choice.${NC}";;
+        esac; echo -e "${CYAN}Operation complete. Press [Enter] to continue...${NC}"; read -n 1;
     done
 }
 
 # --- Main Menu Display and Logic ---
 check_root
 
-# The main menu is now wrapped in a while loop
 while true; do
     clear
     CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
     echo "================================================="
-    echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v11.0"
+    echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v12.0"
     echo "================================================="
     echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
     echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
@@ -239,11 +237,28 @@ while true; do
     read -p "Enter your choice [1-5]: " choice
 
     case $choice in
-        1) setup_iran_server; read -p $'\nPress [Enter] to return to menu...' ;;
-        2) setup_foreign_server; read -p $'\nPress [Enter] to return to menu...' ;;
-        3) uninstall_frp; read -p $'\nPress [Enter] to return to menu...' ;;
-        4) show_optimization_menu ;;
-        5) echo -e "${YELLOW}Exiting.${NC}"; break ;; # This breaks the main loop and exits the script
-        *) echo -e "${RED}Invalid choice. Please try again.${NC}"; sleep 2 ;;
+        1) 
+            setup_iran_server
+            read -p $'\nPress [Enter] to return to menu...'
+            ;;
+        2) 
+            setup_foreign_server
+            read -p $'\nPress [Enter] to return to menu...'
+            ;;
+        3) 
+            uninstall_frp
+            read -p $'\nPress [Enter] to return to menu...'
+            ;;
+        4) 
+            show_optimization_menu 
+            ;;
+        5) 
+            echo -e "${YELLOW}Exiting.${NC}"; 
+            break 
+            ;;
+        *) 
+            echo -e "${RED}Invalid choice. Please try again.${NC}"; 
+            sleep 2 
+            ;;
     esac
 done
