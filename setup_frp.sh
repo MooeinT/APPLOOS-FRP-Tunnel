@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v24.1 - Simplified)
+#   APPLOOS FRP TUNNEL - Full Management Script (v24.3 - Systemd Fix)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -370,14 +370,14 @@ log_level = info
 log_max_days = 3
 EOF
 
-    case $FRP_PROTOCOL in # <--- Added 'in' here
+    case $FRP_PROTOCOL in
         "tcp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
         "quic") echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
         "wss")
             echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini
             echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini
             ;;
-    esac # <--- Added 'esac' here
+    esac
 
     add_ufw_rules # Add new UFW rules
 
@@ -424,7 +424,7 @@ log_level = info
 log_max_days = 3
 EOF
 
-    case $FRP_PROTOCOL in # <--- Added 'in' here
+    case $FRP_PROTOCOL in
         "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;;
         "quic")
             echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini
@@ -436,7 +436,7 @@ EOF
             echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini
             echo "subdomain = ${FRP_CLIENT_SUBDOMAIN}" >> ${FRP_INSTALL_DIR}/frpc.ini
             ;;
-    esac # <--- Added 'esac' here
+    esac
 
     # Add general TCP/UDP range proxies
     if [ -n "$FRP_TCP_PORTS_FRP" ]; then
@@ -546,7 +546,7 @@ main_menu() {
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
         echo "================================================="
-        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.1"
+        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.3"
         echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
         echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
