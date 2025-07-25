@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v24.0 - Enhanced Security & Features)
+#   APPLOOS FRP TUNNEL - Full Management Script (v24.1 - Simplified)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -31,8 +31,8 @@ check_root() {
 # --- Dependency Management ---
 install_dependencies() {
     echo -e "\n${YELLOW}Checking and installing dependencies...${NC}"
-    local apt_packages="wget tar ufw"
-    local yum_packages="wget tar ufw"
+    local apt_packages="wget tar ufw sqlite3" # Added sqlite3 for XUI port detection
+    local yum_packages="wget tar ufw sqlite" # sqlite for CentOS/RHEL
 
     if command -v apt &> /dev/null; then
         # Debian/Ubuntu based
@@ -54,7 +54,7 @@ install_dependencies() {
             fi
         fi
     else
-        echo -e "${RED}ERROR: Unsupported operating system. Please install wget, tar, and ufw manually.${NC}"
+        echo -e "${RED}ERROR: Unsupported operating system. Please install wget, tar, ufw, and sqlite manually.${NC}"
         exit 1
     fi
     echo -e "${GREEN}Dependencies check complete.${NC}"
@@ -85,8 +85,8 @@ get_xui_panel_port() {
     fi
 
     # Fallback if x-ui.db not found or port not in DB
-    echo -e "${YELLOW}Could not automatically detect XUI Panel Port. Please enter it manually (leave blank if XUI is not installed).${NC}"
-    read -p "Enter XUI Panel Port (e.g., 54333): " manual_xui_port
+    echo -e "${YELLOW}Could not automatically detect XUI Panel Port. If XUI is installed, please enter its port manually.${NC}"
+    read -p "Enter XUI Panel Port (e.g., 54333, leave blank if XUI is not installed): " manual_xui_port
     if [[ -n "$manual_xui_port" && "$manual_xui_port" =~ ^[0-9]+$ ]]; then
         XUI_PANEL_PORT="$manual_xui_port"
     else
@@ -127,32 +127,79 @@ get_server_ips() {
     return 0
 }
 
-get_port_input() {
-    echo -e "\n${CYAN}Enter the TCP port(s) you want to tunnel (leave blank if none).${NC}"
-    read -p "TCP Ports (e.g., 8080, 20000-30000): " user_tcp_ports
-    if [[ -n "$XUI_PANEL_PORT" && "$user_tcp_ports" == *"$XUI_PANEL_PORT"* ]]; then
-        echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
+# Merged function for getting TCP and UDP ports
+get_tunneled_ports() {
+    echo -e "\n${CYAN}Enter the TCP and/or UDP port(s) you want to tunnel.${NC}"
+    echo -e "${CYAN}Use commas for multiple ports, e.g., 8080,443. Use hyphens for ranges, e.g., 20000-30000.${NC}"
+    read -p "Enter Ports (e.g., 8080, 20000-30000/tcp, 500,4500/udp): " user_ports_input
+
+    # Split input into TCP and UDP parts based on /tcp or /udp suffix
+    FRP_TCP_PORTS_FRP=""
+    FRP_UDP_PORTS_FRP=""
+
+    local temp_tcp_ports=""
+    local temp_udp_ports=""
+
+    # Normalize input: remove spaces, convert to lowercase
+    local normalized_input=$(echo "$user_ports_input" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+
+    # Process each segment of the input
+    OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$normalized_input"; IFS=$OLD_IFS;
+    for segment in "${PORTS_ARRAY[@]}"; do
+        if [[ "$segment" =~ /tcp$ ]]; then
+            port_val=${segment%/*} # Remove /tcp suffix
+            if [[ -n "$port_val" ]]; then temp_tcp_ports+="$port_val,"; fi
+        elif [[ "$segment" =~ /udp$ ]]; then
+            port_val=${segment%/*} # Remove /udp suffix
+            if [[ -n "$port_val" ]]; then temp_udp_ports+="$port_val,"; fi
+        elif [[ "$segment" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+            # If no /tcp or /udp suffix, default to TCP
+            temp_tcp_ports+="$segment,"
+        else
+            echo -e "${RED}Invalid port format in '$segment'. Skipping.${NC}"
+        fi
+    done
+
+    # Remove trailing commas
+    FRP_TCP_PORTS_FRP=$(echo "$temp_tcp_ports" | sed 's/,$//')
+    FRP_UDP_PORTS_FRP=$(echo "$temp_udp_ports" | sed 's/,$//')
+
+    if [[ -z "$FRP_TCP_PORTS_FRP" && -z "$FRP_UDP_PORTS_FRP" ]]; then
+        echo -e "${RED}You must enter at least one valid TCP or UDP port.${NC}"
         return 1
     fi
-    if [[ -n "$user_tcp_ports" && ! "$user_tcp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid TCP port format.${NC}"; return 1; fi
 
-    echo -e "\n${CYAN}Enter the UDP port(s) you want to tunnel (leave blank if none).${NC}"
-    read -p "UDP Ports (e.g., 500, 4500): " user_udp_ports
-    if [[ -n "$XUI_PANEL_PORT" && "$user_udp_ports" == *"$XUI_PANEL_PORT"* ]]; then
-        echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
-        return 1
+    # Check for XUI panel port conflict
+    if [[ -n "$XUI_PANEL_PORT" ]]; then
+        local conflict=false
+        OLD_IFS=$IFS; IFS=','; read -ra CHECK_PORTS <<< "$FRP_TCP_PORTS_FRP"; IFS=$OLD_IFS;
+        for p in "${CHECK_PORTS[@]}"; do
+            if [[ "$p" == "$XUI_PANEL_PORT" ]]; then conflict=true; break; fi
+        done
+        OLD_IFS=$IFS; IFS=','; read -ra CHECK_PORTS <<< "$FRP_UDP_PORTS_FRP"; IFS=$OLD_IFS;
+        for p in "${CHECK_PORTS[@]}"; do
+            if [[ "$p" == "$XUI_PANEL_PORT" ]]; then conflict=true; break; fi
+        done
+
+        if [[ "$conflict" == true ]]; then
+            echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
+            return 1
+        fi
     fi
-    if [[ -n "$user_udp_ports" && ! "$user_udp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid UDP port format.${NC}"; return 1; fi
 
-    if [[ -z "$user_tcp_ports" && -z "$user_udp_ports" ]]; then echo -e "${RED}You must enter at least one TCP or UDP port.${NC}"; return 1; fi
-
-    # Store ports in variables for FRP config and UFW
-    FRP_TCP_PORTS_FRP="$user_tcp_ports"; FRP_TCP_PORTS_UFW="${user_tcp_ports//-/:}"
-    FRP_UDP_PORTS_FRP="$user_udp_ports"; FRP_UDP_PORTS_UFW="${user_udp_ports//-/:}"
+    # Format for UFW: replace hyphens with colons
+    FRP_TCP_PORTS_UFW="${FRP_TCP_PORTS_FRP//-/:}"
+    FRP_UDP_PORTS_UFW="${FRP_UDP_PORTS_FRP//-/:}"
 
     # Save ports for later UFW cleanup
-    echo "$FRP_TCP_PORTS_UFW" > "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
-    echo "$FRP_UDP_PORTS_UFW" > "${FRP_INSTALL_DIR}/frp_udp_ports_ufw.conf"
+    # Overwrite if exists to ensure only current ports are listed
+    echo "" > "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
+    echo "" > "${FRP_INSTALL_DIR}/frp_udp_ports_ufw.conf"
+
+    if [[ -n "$FRP_TCP_PORTS_UFW" ]]; then echo "$FRP_TCP_PORTS_UFW" >> "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"; fi
+    if [[ -n "$FRP_UDP_PORTS_UFW" ]]; then echo "$FRP_UDP_PORTS_UFW" >> "${FRP_INSTALL_DIR}/frp_udp_ports_ufw.conf"; fi
+    
+    # Always include dashboard and control ports in UFW cleanup list
     echo "${FRP_DASHBOARD_PORT}" >> "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
     echo "${FRP_TCP_CONTROL_PORT}" >> "${FRP_INSTALL_DIR}/frp_tcp_ports_ufw.conf"
     echo "${FRP_QUIC_CONTROL_PORT}" >> "${FRP_INSTALL_DIR}/frp_udp_ports_ufw.conf" # QUIC control is UDP
@@ -187,18 +234,7 @@ get_protocol_choice() {
     fi
 }
 
-get_advanced_settings() {
-    echo -e "\n${CYAN}--- Advanced FRP Settings ---${NC}"
-    read -p "Enter Log Level (trace, debug, info, warn, error - default: info): " FRP_LOG_LEVEL
-    if [[ -z "$FRP_LOG_LEVEL" ]]; then FRP_LOG_LEVEL="info"; fi
-    
-    read -p "Enter Max Pool Count (number of connections in client connection pool - default: 5): " FRP_MAX_POOL_COUNT
-    if [[ -z "$FRP_MAX_POOL_COUNT" ]]; then FRP_MAX_POOL_COUNT="5"; fi
-    if ! [[ "$FRP_MAX_POOL_COUNT" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}Invalid Max Pool Count. Using default (5).${NC}"
-        FRP_MAX_POOL_COUNT="5"
-    fi
-}
+# Removed get_advanced_settings function
 
 # --- Core Logic Functions ---
 stop_frp_processes() {
@@ -257,27 +293,34 @@ remove_ufw_rules() {
 
     if [ -f "$ufw_tcp_rules_file" ]; then
         while IFS= read -r port_rule; do
-            if [[ "$port_rule" =~ ^[0-9]+(:[0-9]+)?$ ]]; then # Match single port or range (e.g., 80 or 20000:30000)
-                ufw delete allow "$port_rule"/tcp > /dev/null 2>&1 || true
-            fi
+            # Split by comma to handle multiple port rules on one line (e.g., 8080,20000:30000)
+            OLD_IFS=$IFS; IFS=','; read -ra INDIVIDUAL_PORTS <<< "$port_rule"; IFS=$OLD_IFS;
+            for p_rule in "${INDIVIDUAL_PORTS[@]}"; do
+                if [[ "$p_rule" =~ ^[0-9]+(:[0-9]+)?$ ]]; then # Match single port or range (e.g., 80 or 20000:30000)
+                    ufw delete allow "$p_rule"/tcp > /dev/null 2>&1 || true
+                fi
+            done
         done < "$ufw_tcp_rules_file"
         rm -f "$ufw_tcp_rules_file"
     fi
 
     if [ -f "$ufw_udp_rules_file" ]; then
         while IFS= read -r port_rule; do
-            if [[ "$port_rule" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
-                ufw delete allow "$port_rule"/udp > /dev/null 2>&1 || true
-            fi
+            OLD_IFS=$IFS; IFS=','; read -ra INDIVIDUAL_PORTS <<< "$port_rule"; IFS=$OLD_IFS;
+            for p_rule in "${INDIVIDUAL_PORTS[@]}"; do
+                if [[ "$p_rule" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
+                    ufw delete allow "$p_rule"/udp > /dev/null 2>&1 || true
+                fi
+            done
         done < "$ufw_udp_rules_file"
-        rm -f "$ufw_udp_rules_file"
+    rm -f "$ufw_udp_rules_file"
     fi
     ufw reload > /dev/null 2>&1 || true # Reload UFW even if no rules were found
     echo -e "${GREEN}UFW rules removed.${NC}"
 }
 
 setup_iran_server() {
-    get_server_ips && get_port_input && get_protocol_choice && get_strong_password "Enter a strong password for FRP Dashboard: " FRP_DASHBOARD_PASSWORD && get_security_token && get_advanced_settings || return 1
+    get_server_ips && get_tunneled_ports && get_protocol_choice && get_strong_password "Enter a strong password for FRP Dashboard: " FRP_DASHBOARD_PASSWORD && get_security_token || return 1
     
     echo -e "\n${YELLOW}--- Setting up Iran Server (frps) ---${NC}"
     stop_frp_processes
@@ -296,7 +339,7 @@ tcp_mux = ${TCP_MUX}
 authentication_method = token
 token = ${FRP_AUTH_TOKEN}
 log_file = /var/log/frps.log
-log_level = ${FRP_LOG_LEVEL}
+log_level = info
 log_max_days = 3
 EOF
 
@@ -306,10 +349,6 @@ EOF
         "wss")
             echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini
             echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini
-            # For WSS, frps also needs to act as an HTTP server to handle WebSocket handshake
-            # This is typically done on port 80 for ACME challenges and redirect, and 443 for WSS itself.
-            # No specific configuration for HTTP/HTTPS listeners beyond opening ports.
-            # The subdomain_host handles routing for the WSS connection.
             ;;
     esac
 
@@ -341,7 +380,7 @@ EOF
 }
 
 setup_foreign_server() {
-    get_server_ips && get_xui_panel_port && get_port_input && get_protocol_choice && get_security_token && get_advanced_settings || return 1
+    get_server_ips && get_xui_panel_port && get_tunneled_ports && get_protocol_choice && get_security_token || return 1
     
     echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"
     stop_frp_processes
@@ -354,11 +393,11 @@ tcp_mux = ${TCP_MUX}
 authentication_method = token
 token = ${FRP_AUTH_TOKEN}
 log_file = /var/log/frpc.log
-log_level = ${FRP_LOG_LEVEL}
+log_level = info
 log_max_days = 3
 EOF
 
-    case $FRP_PROTOCOL in
+    case $FRP_PROTOCOL
         "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;;
         "quic")
             echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini
@@ -381,7 +420,7 @@ local_ip = 127.0.0.1
 local_port = ${FRP_TCP_PORTS_FRP}
 remote_port = ${FRP_TCP_PORTS_FRP}
 use_compression = true
-max_pool_count = ${FRP_MAX_POOL_COUNT}
+max_pool_count = 5 # Defaulted to 5 after removing advanced options
 EOF
     fi
 
@@ -393,7 +432,7 @@ local_ip = 127.0.0.1
 local_port = ${FRP_UDP_PORTS_FRP}
 remote_port = ${FRP_UDP_PORTS_FRP}
 use_compression = true
-max_pool_count = ${FRP_MAX_POOL_COUNT}
+max_pool_count = 5 # Defaulted to 5 after removing advanced options
 EOF
     fi
 
@@ -480,7 +519,7 @@ main_menu() {
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
         echo "================================================="
-        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.0"
+        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.1"
         echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
         echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
