@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v17.0 - Full Optimization Removal)
+#   APPLOOS FRP TUNNEL - Full Management Script (v18.0 - With Status Indicator)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -22,6 +22,15 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 
 # --- Root Check ---
 check_root() { if [[ $EUID -ne 0 ]]; then echo -e "${RED}ERROR: Must be run as root.${NC}"; exit 1; fi; }
+
+# --- New function to check installation status ---
+check_install_status() {
+    if [ -f "${SYSTEMD_DIR}/frps.service" ] || [ -f "${SYSTEMD_DIR}/frpc.service" ]; then
+        echo -e "  FRP Status: ${GREEN}[ ✅ Installed ]${NC}"
+    else
+        echo -e "  FRP Status: ${RED}[ ❌ Not Installed ]${NC}"
+    fi
+}
 
 # --- Input Functions ---
 get_server_ips() {
@@ -126,27 +135,16 @@ uninstall_frp() {
     echo -e "${YELLOW}Note: Firewall rules must be removed manually.${NC}"
     echo -e "\n${GREEN}SUCCESS! FRP has been uninstalled.${NC}"
 }
-
-# --- Optimization Functions (Updated) ---
 install_bbr() { sed -i '/net.ipv4.tcp_congestion_control\|net.core.default_qdisc/d' /etc/sysctl.conf; echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf; echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> BBR enabled.${NC}"; }
 remove_bbr() { sed -i '/net.ipv4.tcp_congestion_control=bbr\|net.core.default_qdisc=fq/d' /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> BBR removed.${NC}"; }
 install_cubic() { sed -i '/net.ipv4.tcp_congestion_control\|net.core.default_qdisc/d' /etc/sysctl.conf; echo "net.ipv4.tcp_congestion_control=cubic" >> /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> Cubic enabled.${NC}"; }
 remove_cubic() { sed -i '/net.ipv4.tcp_congestion_control=cubic/d' /etc/sysctl.conf; sysctl -p > /dev/null 2>&1; echo -e "${GREEN}--> Cubic setting removed.${NC}"; }
-apply_sysctl_optimizations() {
-    cat > ${OPTIMIZATIONS_FILE} << EOF
+apply_sysctl_optimizations() { cat > ${OPTIMIZATIONS_FILE} << EOF
 # General Network Tuning by APPLOOS FRP Script
 net.core.rmem_max=16777216; net.core.wmem_max=16777216; net.ipv4.tcp_rmem=4096 87380 16777216; net.ipv4.tcp_wmem=4096 65536 16777216; net.core.netdev_max_backlog=30000; net.ipv4.tcp_max_syn_backlog=8192; net.ipv4.tcp_max_tw_buckets=2000000; net.ipv4.tcp_fastopen=3
 EOF
-    sysctl -p ${OPTIMIZATIONS_FILE} > /dev/null 2>&1; echo -e "${GREEN}--> General optimizations applied.${NC}"
-}
-remove_sysctl_optimizations() { # NEW FUNCTION
-    if [ -f "${OPTIMIZATIONS_FILE}" ]; then
-        rm -f "${OPTIMIZATIONS_FILE}"; sysctl --system > /dev/null 2>&1
-        echo -e "${GREEN}--> General optimizations file removed and settings reverted.${NC}"
-    else
-        echo -e "${YELLOW}--> No general optimizations file found to remove.${NC}"
-    fi
-}
+sysctl -p ${OPTIMIZATIONS_FILE} > /dev/null 2>&1; echo -e "${GREEN}--> General optimizations applied.${NC}"; }
+remove_sysctl_optimizations() { if [ -f "${OPTIMIZATIONS_FILE}" ]; then rm -f "${OPTIMIZATIONS_FILE}"; sysctl --system > /dev/null 2>&1; echo -e "${GREEN}--> Optimizations file removed.${NC}"; else echo -e "${YELLOW}--> No optimizations file found.${NC}"; fi; }
 show_optimization_menu() {
     while true; do
         clear; echo "================================================="; echo -e "      ${CYAN}Network Optimizations Menu${NC}"; echo "================================================="
@@ -154,11 +152,8 @@ show_optimization_menu() {
         echo "-------------------------------------------------"; echo "1. Install BBR"; echo "2. Remove BBR"; echo "---"; echo "3. Install Cubic"; echo "4. Remove Cubic"
         echo "---"; echo "5. Apply General Optimizations"; echo "6. Remove General Optimizations"
         echo "---"; echo "7. Back to Main Menu"; echo "-------------------------------------------------"; read -p "Enter your choice [1-7]: " opt_choice
-        case $opt_choice in
-            1) install_bbr; ;; 2) remove_bbr; ;; 3) install_cubic; ;; 4) remove_cubic; ;;
-            5) apply_sysctl_optimizations; ;; 6) remove_sysctl_optimizations; ;;
-            7) break ;; *) echo -e "${RED}Invalid choice.${NC}";;
-        esac; echo -e "${CYAN}Operation complete. Press [Enter]...${NC}"; read -n 1;
+        case $opt_choice in 1) install_bbr; ;; 2) remove_bbr; ;; 3) install_cubic; ;; 4) remove_cubic; ;; 5) apply_sysctl_optimizations; ;; 6) remove_sysctl_optimizations; ;; 7) break ;; *) echo -e "${RED}Invalid choice.${NC}";; esac
+        echo -e "${CYAN}Operation complete. Press [Enter]...${NC}"; read -n 1;
     done
 }
 
@@ -167,10 +162,19 @@ main_menu() {
     while true; do
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v17.0"; echo "================================================="
-        echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
-        echo "-------------------------------------------------"; echo "  1. Setup IRAN Server (frps)"; echo "  2. Setup FOREIGN Server (frpc)"
-        echo "  3. UNINSTALL FRP"; echo "  4. Network Optimizations Menu"; echo "  5. Exit"; echo "-------------------------------------------------"
+        echo "================================================="
+        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v18.0"
+        echo "================================================="
+        echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
+        echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
+        check_install_status # New function call for status
+        echo "-------------------------------------------------"
+        echo "  1. Setup this machine as IRAN Server (frps)"
+        echo "  2. Setup this machine as FOREIGN Server (frpc)"
+        echo "  3. UNINSTALL FRP from this machine"
+        echo "  4. Network Optimizations Menu"
+        echo "  5. Exit"
+        echo "-------------------------------------------------"
         read -p "Enter your choice [1-5]: " choice
         case $choice in
             1) setup_iran_server; echo -e "\n${CYAN}Press [Enter]...${NC}"; read ;;
