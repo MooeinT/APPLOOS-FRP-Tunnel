@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v24.3 - Systemd Fix)
+#   APPLOOS FRP TUNNEL - Full Management Script (v24.4 - WSS with Certbot SSL)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -31,8 +31,8 @@ check_root() {
 # --- Dependency Management ---
 install_dependencies() {
     echo -e "\n${YELLOW}Checking and installing dependencies...${NC}"
-    local apt_packages="wget tar ufw sqlite3" # Added sqlite3 for XUI port detection
-    local yum_packages="wget tar ufw sqlite" # sqlite for CentOS/RHEL
+    local apt_packages="wget tar ufw sqlite3 curl" # Added sqlite3 for XUI port detection, curl for certbot
+    local yum_packages="wget tar ufw sqlite curl" # sqlite for CentOS/RHEL, curl for certbot
 
     if command -v apt &> /dev/null; then
         # Debian/Ubuntu based
@@ -54,7 +54,7 @@ install_dependencies() {
             fi
         fi
     else
-        echo -e "${RED}ERROR: Unsupported operating system. Please install wget, tar, ufw, and sqlite manually.${NC}"
+        echo -e "${RED}ERROR: Unsupported operating system. Please install wget, tar, ufw, sqlite, and curl manually.${NC}"
         exit 1
     fi
     echo -e "${GREEN}Dependencies check complete.${NC}"
@@ -229,7 +229,7 @@ get_tunneled_ports() {
 
     # If WSS, add ports 80 and 443 to cleanup list
     if [[ "$FRP_PROTOCOL" == "wss" ]]; then
-        all_tcp_ports_for_cleanup+=("80")
+        all_tcp_ports_for_cleanup+=("80") # Add for web server, though FRP handles 443 directly
         all_tcp_ports_for_cleanup+=("443")
     fi
 
@@ -241,7 +241,7 @@ get_tunneled_ports() {
 }
 
 get_protocol_choice() {
-    echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}\n  1. TCP (Standard)\n  2. QUIC (Recommended for latency)\n  3. WSS (Max Stealth, Requires Domain)"
+    echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}\n  1. TCP (Standard)\n  2. QUIC (Recommended for latency)\n  3. WSS (Max Stealth, Requires Domain + SSL)"
     read -p "Enter choice [1-3]: " proto_choice
     FRP_PROTOCOL="tcp" # Default
     if [[ "$proto_choice" == "2" ]]; then FRP_PROTOCOL="quic"; fi
@@ -261,7 +261,69 @@ get_protocol_choice() {
     fi
 }
 
-# Removed get_advanced_settings function
+# --- Certbot Functions ---
+install_certbot() {
+    echo -e "\n${YELLOW}Checking Certbot installation...${NC}"
+    if ! command -v certbot &> /dev/null; then
+        echo -e "${YELLOW}Certbot not found. Installing Snapd and Certbot...${NC}"
+        if command -v apt &> /dev/null; then
+            apt update -qq > /dev/null
+            apt install -y snapd > /dev/null
+            snap install core > /dev/null 2>&1
+            snap refresh core > /dev/null 2>&1
+            snap install --classic certbot > /dev/null
+            ln -s /snap/bin/certbot /usr/bin/certbot > /dev/null 2>&1
+        elif command -v yum &> /dev/null; then
+            yum install -y snapd > /dev/null
+            systemctl enable --now snapd.socket > /dev/null 2>&1
+            ln -s /var/lib/snapd/snap /snap > /dev/null 2>&1
+            snap install core > /dev/null 2>&1
+            snap refresh core > /dev/null 2>&1
+            snap install --classic certbot > /dev/null
+            ln -s /snap/bin/certbot /usr/bin/certbot > /dev/null 2>&1
+        else
+            echo -e "${RED}ERROR: Neither apt nor yum found. Cannot install Certbot automatically. Please install it manually.${NC}"
+            exit 1
+        fi
+        if ! command -v certbot &> /dev/null; then
+            echo -e "${RED}ERROR: Certbot installation failed. Please check your system.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Certbot installed successfully.${NC}"
+    else
+        echo -e "${GREEN}Certbot is already installed.${NC}"
+    fi
+}
+
+get_ssl_certificate() {
+    install_certbot
+    echo -e "\n${YELLOW}Attempting to obtain SSL certificate for ${FRP_DOMAIN} using Certbot (DNS-01 Challenge)...${NC}"
+    echo -e "${CYAN}Certbot will provide a TXT record. You MUST add this record to your domain's DNS settings.${NC}"
+    echo -e "${CYAN}After adding the TXT record, press Enter to continue the process.${NC}"
+
+    # Try to obtain certificate
+    certbot certonly --manual --preferred-challenges dns --email admin@${FRP_DOMAIN} --agree-tos --no-eff-email -d "${FRP_DOMAIN}"
+
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}ERROR: Failed to obtain SSL certificate for ${FRP_DOMAIN}. Please check Certbot output above for details.${NC}"
+        echo -e "${RED}Ensure your DNS TXT record is correctly added and propagated before trying again.${NC}"
+        return 1
+    fi
+    
+    # Store certificate paths
+    FRP_CERT_PATH="/etc/letsencrypt/live/${FRP_DOMAIN}/fullchain.pem"
+    FRP_KEY_PATH="/etc/letsencrypt/live/${FRP_DOMAIN}/privkey.pem"
+
+    if [ ! -f "$FRP_CERT_PATH" ] || [ ! -f "$FRP_KEY_PATH" ]; then
+        echo -e "${RED}ERROR: SSL certificate files not found at expected path after Certbot ran. This is unusual.${NC}"
+        echo -e "${RED}Please verify the Certbot output and file locations manually.${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}SSL certificate successfully obtained for ${FRP_DOMAIN}.${NC}"
+    return 0
+}
+
 
 # --- Core Logic Functions ---
 stop_frp_processes() {
@@ -289,7 +351,7 @@ add_ufw_rules() {
     # Main control port
     if [[ "$FRP_PROTOCOL" == "tcp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp comment "FRP TCP Control Port" > /dev/null; fi
     if [[ "$FRP_PROTOCOL" == "quic" ]]; then ufw allow ${FRP_QUIC_CONTROL_PORT}/udp comment "FRP QUIC Control Port" > /dev/null; fi
-    if [[ "$FRP_PROTOCOL" == "wss" ]]; then ufw allow 80/tcp comment "FRP WSS HTTP" > /dev/null; ufw allow 443/tcp comment "FRP WSS HTTPS" > /dev/null; fi
+    if [[ "$FRP_PROTOCOL" == "wss" ]]; then ufw allow 443/tcp comment "FRP WSS HTTPS" > /dev/null; fi # Changed from 80/tcp as FRP only needs 443 for WSS
 
     # Dashboard port
     ufw allow ${FRP_DASHBOARD_PORT}/tcp comment "FRP Dashboard" > /dev/null
@@ -349,6 +411,10 @@ remove_ufw_rules() {
 setup_iran_server() {
     get_server_ips && get_tunneled_ports && get_protocol_choice && get_strong_password "Enter a strong password for FRP Dashboard: " FRP_DASHBOARD_PASSWORD && get_security_token || return 1
     
+    if [[ "$FRP_PROTOCOL" == "wss" ]]; then
+        get_ssl_certificate || return 1 # Get SSL cert for WSS
+    fi
+
     echo -e "\n${YELLOW}--- Setting up Iran Server (frps) ---${NC}"
     stop_frp_processes
     download_and_extract
@@ -374,8 +440,12 @@ EOF
         "tcp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
         "quic") echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
         "wss")
+            echo "bind_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini
             echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini
-            echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini
+            echo "tls_certificate_file = ${FRP_CERT_PATH}" >> ${FRP_INSTALL_DIR}/frps.ini
+            echo "tls_private_key_file = ${FRP_KEY_PATH}" >> ${FRP_INSTALL_DIR}/frps.ini
+            echo "tls_enable_mutual_authentication = false" >> ${FRP_INSTALL_DIR}/frps.ini # Optional, usually false
+            echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini # Changed to FRP_DOMAIN
             ;;
     esac
 
@@ -546,7 +616,7 @@ main_menu() {
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
         echo "================================================="
-        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.3"
+        echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.4"
         echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"
         echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
