@@ -94,16 +94,18 @@
      echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}"
      echo "  1. TCP (Standard)"
      echo "  2. QUIC (Recommended for latency)"
-     read -p "Enter choice [1-2]: " proto_choice # Changed options from 1-5 to 1-2
-     FRP_PROTOCOL="tcp" # Default
-     case "$proto_choice" in
-         "1") FRP_PROTOCOL="tcp" ;;
-         "2") FRP_PROTOCOL="quic" ;;
-         *) echo -e "${RED}Invalid protocol choice. Defaulting to TCP.${NC}";;
-     esac
+     read -p "Enter choice [1-2]: " proto_choice
+     # Validate choice and set FRP_PROTOCOL
+     if [[ "$proto_choice" == "1" ]]; then
+         FRP_PROTOCOL="tcp"
+     elif [[ "$proto_choice" == "2" ]]; then
+         FRP_PROTOCOL="quic"
+     else
+         echo -e "${RED}Invalid protocol choice. Defaulting to TCP.${NC}"
+         FRP_PROTOCOL="tcp" # Ensure it defaults to a valid protocol
+     fi
 
      TCP_MUX="false"
-     # TCP MUX is generally for TCP-based common protocols (or WSS, but WSS is excluded here)
      if [[ "$FRP_PROTOCOL" == "tcp" ]]; then
          read -p $'\n'"Enable TCP Multiplexer (tcpmux) for better performance? [y/N]: " mux_choice
          if [[ "$mux_choice" =~ ^[Yy]$ ]]; then TCP_MUX="true"; fi
@@ -191,8 +193,6 @@ EOF
          done
      fi
 
-     # Removed: Example remote ports for STCP, SUDP, XTCP
-
      sudo ufw reload > /dev/null
 
      cat > ${SYSTEMD_DIR}/frps.service << EOF
@@ -217,8 +217,6 @@ EOF
  setup_foreign_server() {
      get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
      echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"; stop_frp_processes; download_and_extract
-
-     # Removed: Generation of random secret keys for STCP/SUDP/XTCP
 
      cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
@@ -282,9 +280,6 @@ custom_domains = ${FRP_DOMAIN}
 EOF
      fi
 
-    # Removed: Specific blocks for STCP, SUDP, XTCP
-
-
      cat > ${SYSTEMD_DIR}/frpc.service << EOF
 [Unit]
 Description=FRP Client (frpc)
@@ -302,8 +297,6 @@ WantedBy=multi-user.target
 EOF
      systemctl daemon-reload; systemctl enable frpc.service > /dev/null; systemctl restart frpc.service
      echo -e "\n${GREEN}SUCCESS! Foreign Server setup is complete.${NC}"
-
-     # Removed: Display generated secret keys if STCP/SUDP/XTCP was chosen
  }
  uninstall_frp() {
      echo -e "\n${YELLOW}Uninstalling FRP...${NC}"; stop_frp_processes
