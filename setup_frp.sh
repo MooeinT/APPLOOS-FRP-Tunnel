@@ -94,16 +94,19 @@
      echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}"
      echo "  1. TCP (Standard)"
      echo "  2. QUIC (Recommended for latency)"
-     read -p "Enter choice [1-2]: " proto_choice
-     # Validate choice and set FRP_PROTOCOL
-     if [[ "$proto_choice" == "1" ]]; then
-         FRP_PROTOCOL="tcp"
-     elif [[ "$proto_choice" == "2" ]]; then
-         FRP_PROTOCOL="quic"
-     else
-         echo -e "${RED}Invalid protocol choice. Defaulting to TCP.${NC}"
-         FRP_PROTOCOL="tcp" # Ensure it defaults to a valid protocol
-     fi
+     # Loop until a valid choice is made
+     while true; do
+         read -p "Enter choice [1-2]: " proto_choice
+         if [[ "$proto_choice" == "1" ]]; then
+             FRP_PROTOCOL="tcp"
+             break
+         elif [[ "$proto_choice" == "2" ]]; then
+             FRP_PROTOCOL="quic"
+             break
+         else
+             echo -e "${RED}Invalid choice. Please enter 1 for TCP or 2 for QUIC.${NC}"
+         fi
+     done
 
      TCP_MUX="false"
      if [[ "$FRP_PROTOCOL" == "tcp" ]]; then
@@ -219,7 +222,6 @@ EOF
      echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"; stop_frp_processes; download_and_extract
 
      # Directly set protocol and server_port based on FRP_PROTOCOL
-     # This eliminates potential issues with sed and ensures correct common config.
      local SERVER_PORT_TO_USE="${FRP_TCP_CONTROL_PORT}"
      if [[ "$FRP_PROTOCOL" == "quic" ]]; then
          SERVER_PORT_TO_USE="${FRP_QUIC_CONTROL_PORT}"
