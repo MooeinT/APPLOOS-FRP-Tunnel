@@ -2,14 +2,14 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v33.0 - FRP Version Update)
+#   APPLOOS FRP TUNNEL - Full Management Script (v34.0 - Latest FRP Version)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
 # ==================================================================================
 
 # --- Static Configuration Variables ---
-FRP_VERSION="0.61.0" # <-- UPDATED to the latest stable version
+FRP_VERSION="0.62.1" # <-- UPDATED to the latest stable version
 FRP_INSTALL_DIR="/opt/frp"
 SYSTEMD_DIR="/etc/systemd/system"
 FRP_TCP_CONTROL_PORT="7000"
@@ -43,7 +43,7 @@ get_server_ips() {
 }
 get_port_input() {
     echo -e "\n${CYAN}Please enter the port(s) you want to tunnel for BOTH TCP & UDP.${NC}"
-    echo -e "Examples:\n  - A single port: ${YELLOW}8080${NC}\n  - A range of ports: ${YELLOW}20000-30000${NC}\n  - A mix: ${YELLOW}80,443,9000-9100${NC}"
+    echo -e "Examples:\n  - A single port: ${YELLOW}8080${NC}\n  - A range: ${YELLOW}20000-30000${NC}\n  - A mix: ${YELLOW}80,443,9000-9100${NC}"
     read -p "Enter ports: " user_ports
     if [[ -z "$user_ports" ]]; then echo -e "${RED}No ports entered.${NC}"; return 1; fi
     if [[ "$user_ports" == *"$XUI_PANEL_PORT"* ]]; then echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"; return 1; fi
@@ -171,7 +171,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v33.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v34.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
