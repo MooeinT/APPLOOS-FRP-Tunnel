@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v23.0 - With XUI Port Protection)
+#   APPLOOS FRP TUNNEL - Full Management Script (v24.0 - Final Syntax Fixes)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -32,7 +32,7 @@ check_install_status() {
     fi
 }
 
-# --- Input Functions (Updated with XUI Port Protection) ---
+# --- Input Functions ---
 get_server_ips() {
     read -p "Enter Public IP for IRAN Server (entry point): " IRAN_SERVER_IP
     if [[ -z "$IRAN_SERVER_IP" ]]; then echo -e "${RED}IP cannot be empty.${NC}"; return 1; fi
@@ -43,22 +43,13 @@ get_server_ips() {
 get_port_input() {
     echo -e "\n${CYAN}Enter the TCP port(s) you want to tunnel (leave blank if none).${NC}"
     read -p "TCP Ports (e.g., 8080, 20000-30000): " user_tcp_ports
-    if [[ "$user_tcp_ports" == *"$XUI_PANEL_PORT"* ]]; then
-        echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
-        return 1
-    fi
+    if [[ "$user_tcp_ports" == *"$XUI_PANEL_PORT"* ]]; then echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"; return 1; fi
     if [[ -n "$user_tcp_ports" && ! "$user_tcp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid TCP port format.${NC}"; return 1; fi
-
     echo -e "\n${CYAN}Enter the UDP port(s) you want to tunnel (leave blank if none).${NC}"
     read -p "UDP Ports (e.g., 500, 4500): " user_udp_ports
-    if [[ "$user_udp_ports" == *"$XUI_PANEL_PORT"* ]]; then
-        echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
-        return 1
-    fi
+    if [[ "$user_udp_ports" == *"$XUI_PANEL_PORT"* ]]; then echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"; return 1; fi
     if [[ -n "$user_udp_ports" && ! "$user_udp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid UDP port format.${NC}"; return 1; fi
-
     if [[ -z "$user_tcp_ports" && -z "$user_udp_ports" ]]; then echo -e "${RED}You must enter at least one TCP or UDP port.${NC}"; return 1; fi
-
     FRP_TCP_PORTS_FRP=$user_tcp_ports; FRP_TCP_PORTS_UFW=${user_tcp_ports//-/:}
     FRP_UDP_PORTS_FRP=$user_udp_ports; FRP_UDP_PORTS_UFW=${user_udp_ports//-/:}
     return 0
@@ -66,9 +57,7 @@ get_port_input() {
 get_protocol_choice() {
     echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}\n  1. TCP (Standard)\n  2. QUIC (Recommended for latency)\n  3. WSS (Max Stealth, Requires Domain)"
     read -p "Enter choice [1-3]: " proto_choice
-    FRP_PROTOCOL="tcp" # Default
-    if [[ "$proto_choice" == "2" ]]; then FRP_PROTOCOL="quic"; fi
-    if [[ "$proto_choice" == "3" ]]; then FRP_PROTOCOL="wss"; fi
+    FRP_PROTOCOL="tcp"; if [[ "$proto_choice" == "2" ]]; then FRP_PROTOCOL="quic"; fi; if [[ "$proto_choice" == "3" ]]; then FRP_PROTOCOL="wss"; fi
     if [[ "$FRP_PROTOCOL" == "wss" ]]; then
         read -p "Enter your domain/subdomain for WSS (e.g., frp.yourdomain.com): " FRP_DOMAIN
         if [[ -z "$FRP_DOMAIN" ]]; then echo -e "${RED}Domain cannot be empty for WSS.${NC}"; return 1; fi
@@ -104,20 +93,23 @@ dashboard_pwd = FRP_PASSWORD_123
 tcp_mux = ${TCP_MUX}
 EOF
     case $FRP_PROTOCOL in "tcp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "quic") echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "wss") echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini; echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini ;; esac
-    echo -e "${YELLOW}--> Setting up firewall...${NC}"
-    if [[ "$FRP_PROTOCOL" == "tcp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi
-    if [[ "$FRP_PROTOCOL" == "quic" ]]; then ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null; fi
-    if [[ "$FRP_PROTOCOL" == "wss" ]]; then ufw allow 80/tcp > /dev/null; ufw allow 443/tcp > /dev/null; fi
+    if [[ "$FRP_PROTOCOL" == "tcp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi; if [[ "$FRP_PROTOCOL" == "quic" ]]; then ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null; fi; if [[ "$FRP_PROTOCOL" == "wss" ]]; then ufw allow 80/tcp > /dev/null; ufw allow 443/tcp > /dev/null; fi
     ufw allow ${FRP_DASHBOARD_PORT}/tcp > /dev/null
     if [ -n "$FRP_TCP_PORTS_UFW" ]; then OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_TCP_PORTS_UFW"; IFS=$OLD_IFS; for port in "${PORTS_ARRAY[@]}"; do ufw allow "$port"/tcp > /dev/null; done; fi
     if [ -n "$FRP_UDP_PORTS_UFW" ]; then OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_UDP_PORTS_UFW"; IFS=$OLD_IFS; for port in "${PORTS_ARRAY[@]}"; do ufw allow "$port"/udp > /dev/null; done; fi
     ufw reload > /dev/null
     cat > ${SYSTEMD_DIR}/frps.service << EOF
 [Unit]
-Description=FRP Server (frps); After=network.target
+Description=FRP Server (frps)
+After=network.target
+
 [Service]
-Type=simple; User=root; Restart=on-failure; RestartSec=5s
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
 ExecStart=${FRP_INSTALL_DIR}/frps -c ${FRP_INSTALL_DIR}/frps.ini
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -133,22 +125,38 @@ server_addr = ${IRAN_SERVER_IP}
 tcp_mux = ${TCP_MUX}
 EOF
     case $FRP_PROTOCOL in "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "quic") echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = quic" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "wss") echo "server_port = 443" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = wss" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "subdomain = frp" >> ${FRP_INSTALL_DIR}/frpc.ini ;; esac
-    if [ -n "$FRP_TCP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+    if [ -n "$FRP_TCP_PORTS_FRP" ]; then
+        cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
 [range:tcp_proxies]
-type = tcp; local_ip = 127.0.0.1; local_port = ${FRP_TCP_PORTS_FRP}; remote_port = ${FRP_TCP_PORTS_FRP}
+type = tcp
+local_ip = 127.0.0.1
+local_port = ${FRP_TCP_PORTS_FRP}
+remote_port = ${FRP_TCP_PORTS_FRP}
 EOF
     fi
-    if [ -n "$FRP_UDP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+    if [ -n "$FRP_UDP_PORTS_FRP" ]; then
+        cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
 [range:udp_proxies]
-type = udp; local_ip = 127.0.0.1; local_port = ${FRP_UDP_PORTS_FRP}; remote_port = ${FRP_UDP_PORTS_FRP}
+type = udp
+local_ip = 127.0.0.1
+local_port = ${FRP_UDP_PORTS_FRP}
+remote_port = ${FRP_UDP_PORTS_FRP}
 EOF
     fi
     cat > ${SYSTEMD_DIR}/frpc.service << EOF
 [Unit]
-Description=FRP Client (frpc); After=network.target
+Description=FRP Client (frpc)
+After=network.target
+
 [Service]
-Type=simple; User=root; Restart=on-failure; RestartSec=5s
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
 ExecStart=${FRP_INSTALL_DIR}/frpc -c ${FRP_INSTALL_DIR}/frpc.ini
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -169,7 +177,7 @@ main_menu() {
     while true; do
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v23.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
