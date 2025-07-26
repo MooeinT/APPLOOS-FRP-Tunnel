@@ -49,19 +49,31 @@ get_port_input() {
 
     echo -e "\n${CYAN}Enter the TCP port(s) you want to tunnel (e.g., 8080, 20000-30000, or leave blank).${NC}"
     read -p "TCP Ports: " user_tcp_ports
-    if [[ -n "$user_tcp_ports" && "$user_tcp_ports" == *"$XUI_PANEL_PORT"* ]]; then
-        echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
-        return 1
+    # Validate TCP ports format and XUI port conflict
+    if [[ -n "$user_tcp_ports" ]]; then
+        if [[ "$user_tcp_ports" == *"$XUI_PANEL_PORT"* ]]; then
+            echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
+            return 1
+        fi
+        if ! [[ "$user_tcp_ports" =~ ^[0-9,-]+$ ]]; then
+            echo -e "${RED}Invalid TCP port format.${NC}"
+            return 1
+        fi
     fi
-    if [[ -n "$user_tcp_ports" && ! "$user_tcp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid TCP port format.${NC}"; return 1; fi
 
     echo -e "\n${CYAN}Enter the UDP port(s) you want to tunnel (e.g., 500, 4500, or leave blank).${NC}"
     read -p "UDP Ports: " user_udp_ports
-    if [[ -n "$user_udp_ports" && "$user_udp_ports" == *"$XUI_PANEL_PORT"* ]]; then
-        echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
-        return 1
+    # Validate UDP ports format and XUI port conflict
+    if [[ -n "$user_udp_ports" ]]; then
+        if [[ "$user_udp_ports" == *"$XUI_PANEL_PORT"* ]]; then
+            echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"
+            return 1
+        fi
+        if ! [[ "$user_udp_ports" =~ ^[0-9,-]+$ ]]; then
+            echo -e "${RED}Invalid UDP port format.${NC}"
+            return 1
+        fi
     fi
-    if [[ -n "$user_udp_ports" && ! "$user_udp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid UDP port format.${NC}"; return 1; fi
 
     echo -e "\n${CYAN}Do you want to tunnel HTTP (port 80) and HTTPS (port 443) via Vhost? [y/N]: ${NC}"
     read -p "Enter choice [y/N]: " http_https_choice
@@ -74,7 +86,7 @@ get_port_input() {
         fi
     fi
 
-    # Combined check for ports and HTTP/HTTPS tunnel - MUST have at least one valid option
+    # Combined check: MUST have at least one valid option (TCP, UDP, or HTTP/HTTPS)
     if [[ -z "$user_tcp_ports" && -z "$user_udp_ports" && "$HTTP_HTTPS_TUNNEL" != "true" ]]; then
         echo -e "${RED}You must enter at least one TCP or UDP port, or enable HTTP/HTTPS tunneling.${NC}"
         return 1
@@ -104,7 +116,8 @@ get_protocol_choice() {
         elif [[ "$proto_choice" == "3" ]]; then
             FRP_PROTOCOL="wss"
             # If WSS is chosen, and HTTP_HTTPS_TUNNEL was NOT chosen before, we MUST ask for domain
-            if [[ "$HTTP_HTTPS_TUNNEL" != "true" ]]; then
+            # If HTTP_HTTPS_TUNNEL was true, FRP_DOMAIN is already set.
+            if [[ -z "$FRP_DOMAIN" ]]; then # Only ask if domain isn't already set by HTTP/HTTPS
                 read -p "Enter your domain/subdomain for WSS (e.g., frp.yourdomain.com): " FRP_DOMAIN
                 if [[ -z "$FRP_DOMAIN" ]]; then echo -e "${RED}Domain cannot be empty for WSS.${NC}"; return 1; fi
             fi
