@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v42.0 - Final w/ Diagnostics)
+#   APPLOOS FRP TUNNEL - Full Management Script (v43.0 - Stable KCP)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -167,73 +167,14 @@ uninstall_frp() {
     echo -e "${YELLOW}Note: Firewall rules must be removed manually for safety.${NC}"
     echo -e "\n${GREEN}SUCCESS! FRP has been uninstalled.${NC}"
 }
-
-# --- Diagnostics Menu ---
-run_diagnostics() {
-    local service_name=""
-    if [ -f "${SYSTEMD_DIR}/frps.service" ]; then
-        service_name="frps"
-    elif [ -f "${SYSTEMD_DIR}/frpc.service" ]; then
-        service_name="frpc"
-    else
-        echo -e "${YELLOW}No FRP service found on this machine.${NC}"
-        return
-    fi
-
-    clear
-    echo "================================================="
-    echo -e "      ${CYAN}FRP Diagnostics Menu (${service_name})${NC}"
-    echo "================================================="
-    echo "1. Check Service Status"
-    echo "2. View Last 50 Log Lines"
-    echo "3. Test Connectivity to Partner Server"
-    echo "4. Back to Main Menu"
-    echo "-------------------------------------------------"
-    read -p "Enter your choice [1-4]: " diag_choice
-
-    case $diag_choice in
-        1)
-            echo -e "\n${YELLOW}--- Service Status for ${service_name} ---${NC}"
-            systemctl status ${service_name}.service --no-pager -l
-            ;;
-        2)
-            echo -e "\n${YELLOW}--- Last 50 Logs for ${service_name} ---${NC}"
-            journalctl -u ${service_name}.service -n 50 --no-pager
-            ;;
-        3)
-            echo -e "\n${YELLOW}--- Running Connectivity Test ---${NC}"
-            if [[ "$service_name" == "frpc" ]]; then
-                # On Foreign server, test connection to Iran server
-                read -p "Enter the IRAN server IP to test connection to: " target_ip
-                read -p "Enter the control port to test (e.g., 7000 for TCP, 7002 for KCP): " target_port
-                read -p "Is the protocol TCP or UDP? [tcp/udp]: " proto
-                if [[ "$proto" == "udp" ]]; then
-                    nc -zvu ${target_ip} ${target_port}
-                else
-                    nc -zv ${target_ip} ${target_port}
-                fi
-            else
-                echo "This test is most useful when run from the Foreign (frpc) server."
-            fi
-            ;;
-        4)
-            return
-            ;;
-        *)
-            echo -e "${RED}Invalid choice.${NC}"
-            ;;
-    esac
-}
-
-# --- Main Menu Display and Logic ---
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v42.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v43.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
-        echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Run Diagnostics"; echo "  4. Exit"; echo "-------------------------------------------------"
-        read -p "Enter your choice [1-4]: " choice
+        echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
+        read -p "Enter your choice [1-3]: " choice
         case $choice in
             1)
                 echo -e "\n${CYAN}Which machine is this?${NC}"; echo "  1. This is the IRAN Server (Public Entry)"; echo "  2. This is the FOREIGN Server (Service Host)"
@@ -241,14 +182,11 @@ main_menu() {
                 if [[ "$setup_choice" == "1" ]]; then setup_iran_server; elif [[ "$setup_choice" == "2" ]]; then setup_foreign_server; else echo -e "${RED}Invalid choice.${NC}"; fi
                 ;;
             2) uninstall_frp ;;
-            3) run_diagnostics ;;
-            4) echo -e "${YELLOW}Exiting.${NC}"; exit 0 ;;
+            3) echo -e "${YELLOW}Exiting.${NC}"; exit 0 ;;
             *) echo -e "${RED}Invalid choice.${NC}"; sleep 2 ;;
         esac
         echo -e "\n${CYAN}Operation complete. Press [Enter] to return to menu...${NC}"; read
     done
 }
-
-# --- Script Start ---
 check_root
 main_menu
