@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v24.0 - Final Syntax Fixes)
+#   APPLOOS FRP TUNNEL - Full Management Script (v25.0 - Final Syntax Fixes)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -41,12 +41,10 @@ get_server_ips() {
     return 0
 }
 get_port_input() {
-    echo -e "\n${CYAN}Enter the TCP port(s) you want to tunnel (leave blank if none).${NC}"
-    read -p "TCP Ports (e.g., 8080, 20000-30000): " user_tcp_ports
+    read -p $'\n'"Enter TCP port(s) to tunnel (leave blank if none): " user_tcp_ports
     if [[ "$user_tcp_ports" == *"$XUI_PANEL_PORT"* ]]; then echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"; return 1; fi
     if [[ -n "$user_tcp_ports" && ! "$user_tcp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid TCP port format.${NC}"; return 1; fi
-    echo -e "\n${CYAN}Enter the UDP port(s) you want to tunnel (leave blank if none).${NC}"
-    read -p "UDP Ports (e.g., 500, 4500): " user_udp_ports
+    read -p $'\n'"Enter UDP port(s) to tunnel (leave blank if none): " user_udp_ports
     if [[ "$user_udp_ports" == *"$XUI_PANEL_PORT"* ]]; then echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"; return 1; fi
     if [[ -n "$user_udp_ports" && ! "$user_udp_ports" =~ ^[0-9,-]+$ ]]; then echo -e "${RED}Invalid UDP port format.${NC}"; return 1; fi
     if [[ -z "$user_tcp_ports" && -z "$user_udp_ports" ]]; then echo -e "${RED}You must enter at least one TCP or UDP port.${NC}"; return 1; fi
@@ -171,13 +169,11 @@ uninstall_frp() {
     echo -e "${YELLOW}Note: Firewall rules must be removed manually.${NC}"
     echo -e "\n${GREEN}SUCCESS! FRP has been uninstalled.${NC}"
 }
-
-# --- Main Menu Display and Logic ---
 main_menu() {
     while true; do
         clear
         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v24.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v25.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
