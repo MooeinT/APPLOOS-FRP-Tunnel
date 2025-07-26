@@ -2,14 +2,14 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v32.0 - FRP Version Update)
+#   APPLOOS FRP TUNNEL - Full Management Script (v33.0 - FRP Version Update)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
 # ==================================================================================
 
 # --- Static Configuration Variables ---
-FRP_VERSION="0.61.0" # <-- UPDATED to the latest version
+FRP_VERSION="0.61.0" # <-- UPDATED to the latest stable version
 FRP_INSTALL_DIR="/opt/frp"
 SYSTEMD_DIR="/etc/systemd/system"
 FRP_TCP_CONTROL_PORT="7000"
@@ -103,10 +103,16 @@ EOF
     ufw reload > /dev/null
     cat > ${SYSTEMD_DIR}/frps.service << EOF
 [Unit]
-Description=FRP Server (frps); After=network.target
+Description=FRP Server (frps)
+After=network.target
+
 [Service]
-Type=simple; User=root; Restart=on-failure; RestartSec=5s
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
 ExecStart=${FRP_INSTALL_DIR}/frps -c ${FRP_INSTALL_DIR}/frps.ini
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -138,10 +144,16 @@ remote_port = ${FRP_TUNNEL_PORTS_FRP}
 EOF
     cat > ${SYSTEMD_DIR}/frpc.service << EOF
 [Unit]
-Description=FRP Client (frpc); After=network.target
+Description=FRP Client (frpc)
+After=network.target
+
 [Service]
-Type=simple; User=root; Restart=on-failure; RestartSec=5s
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
 ExecStart=${FRP_INSTALL_DIR}/frpc -c ${FRP_INSTALL_DIR}/frpc.ini
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -159,7 +171,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v32.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v33.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
