@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v55.0 - Final Stable Release)
+#   APPLOOS FRP TUNNEL - Full Management Script (v56.0 - Final WSS/Nginx Overhaul)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -43,7 +43,7 @@ get_server_ips() {
 }
 get_port_input() {
     echo -e "\n${CYAN}Please enter the port(s) you want to tunnel for BOTH TCP & UDP.${NC}"
-    echo -e "Examples:\n  - A single port: ${YELLOW}8080${NC}\n  - A range of ports: ${YELLOW}20000-30000${NC}\n  - A mix: ${YELLOW}80,443,9000-9100${NC}"
+    echo -e "Examples:\n  - A single port: ${YELLOW}8080${NC}\n  - A range: ${YELLOW}20000-30000${NC}\n  - A mix: ${YELLOW}80,443,9000-9100${NC}"
     read -p "Enter ports: " user_ports
     if [[ -z "$user_ports" ]]; then echo -e "${RED}No ports entered.${NC}"; return 1; fi
     if [[ "$user_ports" == *"$XUI_PANEL_PORT"* ]]; then echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"; return 1; fi
@@ -84,12 +84,22 @@ setup_iran_server() {
     echo -e "\n${YELLOW}--- Setting up Iran Server (frps) ---${NC}"; stop_frp_processes; download_and_extract
     
     if [ "$FRP_PROTOCOL" == "wss" ]; then
-        echo -e "${YELLOW}--> WSS mode: Installing Nginx & Certbot...${NC}"; apt-get update -y > /dev/null && apt-get install nginx certbot python3-certbot-nginx -y > /dev/null
-        if [ $? -ne 0 ]; then echo -e "${RED}Failed to install Nginx/Certbot.${NC}"; return 1; fi
+        echo -e "${YELLOW}--> WSS mode: Checking prerequisites...${NC}"
+        if ! command -v nginx &> /dev/null || ! command -v certbot &> /dev/null; then
+            echo -e "${YELLOW}--> Installing Nginx & Certbot...${NC}"; apt-get update -y > /dev/null && apt-get install nginx certbot python3-certbot-nginx -y > /dev/null
+            if [ $? -ne 0 ]; then echo -e "${RED}Failed to install Nginx/Certbot.${NC}"; return 1; fi
+        fi
+
+        if lsof -i :80 -t >/dev/null || lsof -i :443 -t >/dev/null; then
+            echo -e "${RED}ERROR: Port 80 or 443 is already in use. Please stop the conflicting service (e.g., apache2) and try again.${NC}"
+            return 1
+        fi
+        
         systemctl stop nginx
         echo -e "${YELLOW}--> Obtaining SSL certificate for ${FRP_DOMAIN}...${NC}";
         certbot certonly --standalone --agree-tos --non-interactive --email you@example.com -d ${FRP_DOMAIN}
         if [ $? -ne 0 ]; then echo -e "${RED}Failed to obtain SSL certificate. Check your DNS record for ${FRP_DOMAIN} and that port 80 is open.${NC}"; systemctl start nginx; return 1; fi
+        
         echo -e "${YELLOW}--> Configuring Nginx as a reverse proxy...${NC}"
         cat > /etc/nginx/sites-available/default << EOF
 server {
@@ -120,7 +130,8 @@ server {
     }
 }
 EOF
-        systemctl restart nginx
+        systemctl start nginx
+        
         cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
 [common]
 vhost_http_port = ${FRP_TCP_CONTROL_PORT}
@@ -225,7 +236,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v55.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v56.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"; check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
         read -p "Enter your choice [1-3]: " choice
