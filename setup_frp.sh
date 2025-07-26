@@ -46,7 +46,7 @@
     if [ -z "$FRP_TOKEN" ]; then
         echo -e "${RED}Authentication token cannot be empty. Please enter a token.${NC}"
         return 1
-    end
+    fi # Corrected from 'end' to 'fi'
     return 0
 }
 
