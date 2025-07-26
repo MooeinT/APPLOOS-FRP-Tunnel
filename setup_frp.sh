@@ -143,6 +143,13 @@
          exit 1
      fi
      rm "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}"
+     
+     # Ensure the binaries are executable
+     chmod +x "${FRP_INSTALL_DIR}/frps" "${FRP_INSTALL_DIR}/frpc"
+     if [ $? -ne 0 ]; then
+         echo -e "${RED}ERROR: Failed to set executable permissions for FRP binaries.${NC}"
+         exit 1
+     fi
  }
  setup_iran_server() {
      get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
