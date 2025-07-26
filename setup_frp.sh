@@ -46,7 +46,7 @@
     if [ -z "$FRP_TOKEN" ]; then
         echo -e "${RED}Authentication token cannot be empty. Please enter a token.${NC}"
         return 1
-    fi # Corrected from 'end' to 'fi'
+    fi
     return 0
 }
 
@@ -130,14 +130,286 @@
          "aarch64") FRP_ARCH="arm64" ;;
          "armv7l") FRP_ARCH="arm" ;;
          "i386") FRP_ARCH="386" ;;
-         *) error_exit "Your CPU architecture (${ARCH}) is not supported." ;;
+         *) echo -e "${RED}Your CPU architecture (${ARCH}) is not supported.${NC}"; exit 1 ;; # Changed error_exit to echo and exit
      esac
      FRP_TAR_FILE="frp_${FRP_VERSION}_linux_${FRP_ARCH}.tar.gz"
      wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${FRP_TAR_FILE}" -O "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}"
+     if [ $? -ne 0 ]; then # Check for wget download success
+         echo -e "${RED}ERROR: Failed to download FRP binary. Check internet connection or FRP version/architecture.${NC}"
+         exit 1
+     fi
      tar -zxvf "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}" -C "${FRP_INSTALL_DIR}" --strip-components=1
+     if [ $? -ne 0 ]; then # Check for tar extraction success
+         echo -e "${RED}ERROR: Failed to extract FRP files. The downloaded archive might be corrupted.${NC}"
+         exit 1
+     fi
      rm "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}"
  }
  setup_iran_server() {
      get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
      echo -e "\n${YELLOW}--- Setting up Iran Server (frps) ---${NC}"; stop_frp_processes; download_and_extract
      cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
+[common]
+bind_addr = 0.0.0.0
+bind_port = ${FRP_TCP_CONTROL_PORT}
+bind_udp_port = ${FRP_QUIC_CONTROL_PORT}
+kcp_bind_port = ${FRP_QUIC_CONTROL_PORT} # Often same as bind_udp_port for QUIC
+vhost_http_port = 80
+vhost_https_port = 443
+
+authentication_method = token
+token = ${FRP_TOKEN}
+
+dashboard_addr = 0.0.0.0
+dashboard_port = ${FRP_DASHBOARD_PORT}
+dashboard_user = admin
+dashboard_pwd = PASSWORD_FRP_123 # IMPORTANT: CHANGE THIS PASSWORD IMMEDIATELY!
+
+tcp_mux = ${TCP_MUX}
+
+# log_file = /var/log/frps.log
+# log_level = info
+# log_max_days = 3
+EOF
+
+     echo -e "${YELLOW}--> Setting up firewall...${NC}"
+     sudo ufw allow ssh comment "Allow SSH" > /dev/null
+     sudo ufw allow ${FRP_TCP_CONTROL_PORT}/tcp comment "FRP TCP Control" > /dev/null
+     sudo ufw allow ${FRP_QUIC_CONTROL_PORT}/udp comment "FRP UDP/QUIC Control (for QUIC protocol & UDP proxies)" > /dev/null
+     sudo ufw allow ${FRP_DASHBOARD_PORT}/tcp comment "FRP Dashboard" > /dev/null
+
+     if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then
+        sudo ufw allow 80/tcp comment "FRP HTTP Vhost" > /dev/null
+        sudo ufw allow 443/tcp comment "FRP HTTPS Vhost" > /dev/null
+     fi
+
+     # Allow user-specified TCP/UDP ports for range proxies
+     if [ -n "$FRP_TCP_PORTS_UFW" ]; then
+         OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_TCP_PORTS_UFW"; IFS=$OLD_IFS;
+         for port in "${PORTS_ARRAY[@]}"; do
+             sudo ufw allow "$port"/tcp comment "FRP Tunneled TCP" > /dev/null
+         done
+     fi
+     if [ -n "$FRP_UDP_PORTS_UFW" ]; then
+         OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_UDP_PORTS_UFW"; IFS=$OLD_IFS;
+         for port in "${PORTS_ARRAY[@]}"; do
+             sudo ufw allow "$port"/udp comment "FRP Tunneled UDP" > /dev/null
+         done
+     fi
+
+     # Add example remote ports for STCP, SUDP, XTCP if they might be used
+     # These are just example ports. User must ensure these are open if chosen.
+     sudo ufw allow 6003/tcp comment "FRP STCP Remote Port (Example)" > /dev/null
+     sudo ufw allow 6004/udp comment "FRP SUDP Remote Port (Example)" > /dev/null
+     sudo ufw allow 6005/tcp comment "FRP XTCP Remote Port (Example)" > /dev/null # XTCP can use TCP for initial connection
+
+     sudo ufw reload > /dev/null
+
+     cat > ${SYSTEMD_DIR}/frps.service << EOF
+[Unit]
+Description=FRP Server (frps)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+ExecStart=${FRP_INSTALL_DIR}/frps -c ${FRP_INSTALL_DIR}/frps.ini
+
+[Install]
+WantedBy=multi-user.target
+EOF
+     systemctl daemon-reload; systemctl enable frps.service > /dev/null; systemctl restart frps.service
+     echo -e "\n${GREEN}SUCCESS! Iran Server setup is complete.${NC}"
+ }
+
+ setup_foreign_server() {
+     get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
+     echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"; stop_frp_processes; download_and_extract
+
+     # Generate random secret keys for STCP/SUDP/XTCP
+     STCP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
+     SUDP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
+     XTCP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
+
+     cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
+[common]
+server_addr = ${IRAN_SERVER_IP}
+server_port = ${FRP_TCP_CONTROL_PORT} # Default to TCP control port
+protocol = tcp                         # Default protocol for common connection
+
+authentication_method = token
+token = ${FRP_TOKEN}
+tcp_mux = ${TCP_MUX}
+
+# log_file = /var/log/frpc.log
+# log_level = info
+# log_max_days = 3
+EOF
+
+    # Adjust server_port and protocol for common section based on chosen protocol
+    # Note: STCP/SUDP/XTCP use 'tcp' as common protocol, their specific 'type' handles the rest.
+    case $FRP_PROTOCOL in
+        "quic")
+            sed -i "s/server_port = ${FRP_TCP_CONTROL_PORT}/server_port = ${FRP_QUIC_CONTROL_PORT}/" ${FRP_INSTALL_DIR}/frpc.ini
+            sed -i "/protocol = tcp/c\protocol = quic" ${FRP_INSTALL_DIR}/frpc.ini
+            ;;
+    esac
+
+     # Add TCP range proxies if specified
+     if [ -n "$FRP_TCP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[range:tcp_proxies]
+type = tcp
+local_ip = 127.0.0.1
+local_port = ${FRP_TCP_PORTS_FRP}
+remote_port = ${FRP_TCP_PORTS_FRP}
+EOF
+     fi
+
+     # Add UDP range proxies if specified
+     if [ -n "$FRP_UDP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[range:udp_proxies]
+type = udp
+local_ip = 127.0.0.1
+local_port = ${FRP_UDP_PORTS_FRP}
+remote_port = ${FRP_UDP_PORTS_FRP}
+EOF
+     fi
+
+     # Add HTTP/HTTPS proxies if specified
+     if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[http_proxy]
+type = http
+local_ip = 127.0.0.1
+local_port = 80
+custom_domains = ${FRP_DOMAIN}
+
+[https_proxy]
+type = https
+local_ip = 127.0.0.1
+local_port = 443
+custom_domains = ${FRP_DOMAIN}
+EOF
+     fi
+
+    # Add specific blocks for STCP, SUDP, XTCP if chosen
+    # Default local_port values are common service ports (e.g., SSH, DNS, VNC)
+    # Default remote_port values are example ports that should be open on the frps server
+    if [[ "$FRP_PROTOCOL" == "stcp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[stcp_tunnel]
+type = stcp
+local_ip = 127.0.0.1
+local_port = 22 # Default: Tunnel SSH. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT (e.g., 443 for V2Ray)
+remote_port = 6003 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
+sk = ${STCP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
+EOF
+    fi
+
+    if [[ "$FRP_PROTOCOL" == "sudp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[sudp_tunnel]
+type = sudp
+local_ip = 127.0.0.1
+local_port = 53 # Default: Tunnel DNS. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT
+remote_port = 6004 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
+sk = ${SUDP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
+EOF
+    fi
+
+    if [[ "$FRP_PROTOCOL" == "xtcp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[xtcp_tunnel]
+type = xtcp
+local_ip = 127.0.0.1
+local_port = 5900 # Default: Tunnel VNC. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT
+remote_port = 6005 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
+sk = ${XTCP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
+EOF
+    fi
+
+
+     cat > ${SYSTEMD_DIR}/frpc.service << EOF
+[Unit]
+Description=FRP Client (frpc)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+ExecStart=${FRP_INSTALL_DIR}/frpc -c ${FRP_INSTALL_DIR}/frpc.ini
+
+[Install]
+WantedBy=multi-user.target
+EOF
+     systemctl daemon-reload; systemctl enable frpc.service > /dev/null; systemctl restart frpc.service
+     echo -e "\n${GREEN}SUCCESS! Foreign Server setup is complete.${NC}"
+
+     # Display generated secret keys if STCP/SUDP/XTCP was chosen
+     if [[ "$FRP_PROTOCOL" == "stcp" ]]; then
+         echo -e "\n${YELLOW}--- STCP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
+         echo -e "  STCP Tunnel Name: ${GREEN}stcp_tunnel${NC}"
+         echo -e "  STCP Secret Key (sk): ${GREEN}${STCP_SK}${NC}"
+         echo -e "  Default Local Port (frpc): ${GREEN}22${NC}"
+         echo -e "  Default Remote Port (frps): ${GREEN}6003${NC}"
+         echo -e "  Remember to set 'server_name = stcp_tunnel' and 'sk = ${STCP_SK}' in your local FRP Visitor config."
+     fi
+     if [[ "$FRP_PROTOCOL" == "sudp" ]]; then
+         echo -e "\n${YELLOW}--- SUDP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
+         echo -e "  SUDP Tunnel Name: ${GREEN}sudp_tunnel${NC}"
+         echo -e "  SUDP Secret Key (sk): ${GREEN}${SUDP_SK}${NC}"
+         echo -e "  Default Local Port (frpc): ${GREEN}53${NC}"
+         echo -e "  Default Remote Port (frps): ${GREEN}6004${NC}"
+         echo -e "  Remember to set 'server_name = sudp_tunnel' and 'sk = ${SUDP_SK}' in your local FRP Visitor config."
+     fi
+     if [[ "$FRP_PROTOCOL" == "xtcp" ]]; then
+         echo -e "\n${YELLOW}--- XTCP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
+         echo -e "  XTCP Tunnel Name: ${GREEN}xtcp_tunnel${NC}"
+         echo -e "  XTCP Secret Key (sk): ${GREEN}${XTCP_SK}${NC}"
+         echo -e "  Default Local Port (frpc): ${GREEN}5900${NC}"
+         echo -e "  Default Remote Port (frps): ${GREEN}6005${NC}"
+         echo -e "  Remember to set 'server_name = xtcp_tunnel' and 'sk = ${XTCP_SK}' in your local FRP Visitor config."
+     fi
+ }
+ uninstall_frp() {
+     echo -e "\n${YELLOW}Uninstalling FRP...${NC}"; stop_frp_processes
+     systemctl disable frps.service > /dev/null 2>&1; systemctl disable frpc.service > /dev/null 2>&1
+     rm -f ${SYSTEMD_DIR}/frps.service; rm -f ${SYSTEMD_DIR}/frpc.service
+     systemctl daemon-reload; rm -rf ${FRP_INSTALL_DIR}
+     echo -e "${YELLOW}Note: Firewall rules must be removed manually.${NC}"
+     echo -e "\n${GREEN}SUCCESS! FRP has been uninstalled.${NC}"
+ }
+
+ # --- Main Menu Display and Logic ---
+ main_menu() {
+     while true; do
+         clear
+         CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
+         echo "================================================="; echo -e "     ${CYAN}APPLOOS FRP TUNNEL${NC} - v23.0"; echo "================================================="
+         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
+         check_install_status
+         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
+         read -p "Enter your choice [1-3]: " choice
+         case $choice in
+             1)
+                 echo -e "\n${CYAN}Which machine is this?${NC}"; echo "  1. This is the IRAN Server (Public Entry)"; echo "  2. This is the FOREIGN Server (Service Host)"
+                 read -p "Enter choice [1-2]: " setup_choice
+                 if [[ "$setup_choice" == "1" ]]; then setup_iran_server; elif [[ "$setup_choice" == "2" ]]; then setup_foreign_server; else echo -e "${RED}Invalid choice.${NC}"; fi
+                 ;;
+             2) uninstall_frp ;;
+             3) echo -e "${YELLOW}Exiting.${NC}"; exit 0 ;;
+             *) echo -e "${RED}Invalid choice.${NC}"; sleep 2 ;;
+         esac
+         echo -e "\n${CYAN}Operation complete. Press [Enter] to return to menu...${NC}"; read
+     done
+ }
+
+ # --- Script Start ---
+ check_root
+ main_menu
