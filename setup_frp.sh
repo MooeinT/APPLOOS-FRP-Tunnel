@@ -109,7 +109,8 @@
      esac
 
      TCP_MUX="false"
-     if [[ "$FRP_PROTOCOL" == "tcp" ]]; then # TCP MUX generally applies to TCP-based protocols
+     # TCP MUX is generally for TCP-based common protocols (or WSS, but WSS is excluded here)
+     if [[ "$FRP_PROTOCOL" == "tcp" ]]; then
          read -p $'\n'"Enable TCP Multiplexer (tcpmux) for better performance? [y/N]: " mux_choice
          if [[ "$mux_choice" =~ ^[Yy]$ ]]; then TCP_MUX="true"; fi
      fi
@@ -122,7 +123,7 @@
      systemctl stop frps.service > /dev/null 2>&1; systemctl stop frpc.service > /dev/null 2>&1
  }
  download_and_extract() {
-     rm -rf ${FRP_INSTALL_DIR}; mkdir -p ${FRP_INSTALL_DIR}
+     rm -rf "${FRP_INSTALL_DIR}"; mkdir -p "${FRP_INSTALL_DIR}"
      ARCH=$(uname -m)
      case "$ARCH" in
          "x86_64") FRP_ARCH="amd64" ;;
@@ -166,7 +167,7 @@ EOF
      echo -e "${YELLOW}--> Setting up firewall...${NC}"
      sudo ufw allow ssh comment "Allow SSH" > /dev/null
      sudo ufw allow ${FRP_TCP_CONTROL_PORT}/tcp comment "FRP TCP Control" > /dev/null
-     sudo ufw allow ${FRP_QUIC_CONTROL_PORT}/udp comment "FRP UDP/QUIC Control" > /dev/null
+     sudo ufw allow ${FRP_QUIC_CONTROL_PORT}/udp comment "FRP UDP/QUIC Control (for QUIC protocol & UDP proxies)" > /dev/null
      sudo ufw allow ${FRP_DASHBOARD_PORT}/tcp comment "FRP Dashboard" > /dev/null
 
      if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then
@@ -174,7 +175,7 @@ EOF
         sudo ufw allow 443/tcp comment "FRP HTTPS Vhost" > /dev/null
      fi
 
-     # Allow user-specified TCP/UDP ports
+     # Allow user-specified TCP/UDP ports for range proxies
      if [ -n "$FRP_TCP_PORTS_UFW" ]; then
          OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_TCP_PORTS_UFW"; IFS=$OLD_IFS;
          for port in "${PORTS_ARRAY[@]}"; do
@@ -188,10 +189,8 @@ EOF
          done
      fi
 
-     # Allow ports for STCP, SUDP, XTCP if they are used as remote ports
-     # These are example remote ports, user might change them.
-     # For STCP, SUDP, XTCP, the remote_port on the server needs to be open.
-     # Default example remote ports for these are 6003, 6004, 6005
+     # Add example remote ports for STCP, SUDP, XTCP if they might be used
+     # These are just example ports. User must ensure these are open if chosen.
      sudo ufw allow 6003/tcp comment "FRP STCP Remote Port (Example)" > /dev/null
      sudo ufw allow 6004/udp comment "FRP SUDP Remote Port (Example)" > /dev/null
      sudo ufw allow 6005/tcp comment "FRP XTCP Remote Port (Example)" > /dev/null # XTCP can use TCP for initial connection
@@ -224,7 +223,8 @@ EOF
 [common]
 server_addr = ${IRAN_SERVER_IP}
 server_port = ${FRP_TCP_CONTROL_PORT} # Default to TCP control port
-protocol = tcp                         # Default protocol
+protocol = tcp                         # Default protocol for common connection
+
 authentication_method = token
 token = ${FRP_TOKEN}
 tcp_mux = ${TCP_MUX}
@@ -234,19 +234,16 @@ tcp_mux = ${TCP_MUX}
 # log_max_days = 3
 EOF
 
-    # Adjust server_port and protocol based on chosen protocol
+    # Adjust server_port and protocol for common section based on chosen protocol
+    # Note: STCP/SUDP/XTCP use 'tcp' as common protocol, their specific 'type' handles the rest.
     case $FRP_PROTOCOL in
         "quic")
             sed -i "s/server_port = ${FRP_TCP_CONTROL_PORT}/server_port = ${FRP_QUIC_CONTROL_PORT}/" ${FRP_INSTALL_DIR}/frpc.ini
             sed -i "/protocol = tcp/c\protocol = quic" ${FRP_INSTALL_DIR}/frpc.ini
             ;;
-        "stcp"|"sudp"|"xtcp")
-            # For secret protocols, the common server_port remains the control port.
-            # The actual remote_port for the secret tunnel will be defined below.
-            # Add specific protocol setup if needed beyond just type.
-            ;;
     esac
 
+     # Add TCP range proxies if specified
      if [ -n "$FRP_TCP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
 [range:tcp_proxies]
@@ -257,6 +254,7 @@ remote_port = ${FRP_TCP_PORTS_FRP}
 EOF
      fi
 
+     # Add UDP range proxies if specified
      if [ -n "$FRP_UDP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
 [range:udp_proxies]
@@ -267,6 +265,7 @@ remote_port = ${FRP_UDP_PORTS_FRP}
 EOF
      fi
 
+     # Add HTTP/HTTPS proxies if specified
      if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
 [http_proxy]
@@ -289,9 +288,9 @@ EOF
 [stcp_tunnel]
 type = stcp
 local_ip = 127.0.0.1
-local_port = 22 # Example: Tunnel SSH
+local_port = 22 # Example: Tunnel SSH or other service behind this STCP proxy
 remote_port = 6003 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
-sk = YOUR_STCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
+sk = YOUR_STCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY! MUST BE SAME ON CLIENT/VISITOR SIDE!
 EOF
     fi
 
@@ -300,9 +299,9 @@ EOF
 [sudp_tunnel]
 type = sudp
 local_ip = 127.0.0.1
-local_port = 53 # Example: Tunnel DNS
+local_port = 53 # Example: Tunnel DNS or other UDP service
 remote_port = 6004 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
-sk = YOUR_SUDP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
+sk = YOUR_SUDP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY! MUST BE SAME ON CLIENT/VISITOR SIDE!
 EOF
     fi
 
@@ -311,9 +310,9 @@ EOF
 [xtcp_tunnel]
 type = xtcp
 local_ip = 127.0.0.1
-local_port = 5900 # Example: Tunnel VNC
+local_port = 5900 # Example: Tunnel VNC or other direct P2P service
 remote_port = 6005 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
-sk = YOUR_XTCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY!
+sk = YOUR_XTCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY! MUST BE SAME ON CLIENT/VISITOR SIDE!
 EOF
     fi
 
