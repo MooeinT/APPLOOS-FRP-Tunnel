@@ -2,14 +2,14 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v35.0 - Latest FRP Version + Verify)
+#   APPLOOS FRP TUNNEL - Full Management Script (v36.0 - Final Bug Fix)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
 # ==================================================================================
 
 # --- Static Configuration Variables ---
-FRP_VERSION="0.62.1" # <-- Using latest stable version
+FRP_VERSION="0.62.1"
 FRP_INSTALL_DIR="/opt/frp"
 SYSTEMD_DIR="/etc/systemd/system"
 FRP_TCP_CONTROL_PORT="7000"
@@ -61,6 +61,7 @@ get_protocol_choice() {
         if [[ -z "$FRP_DOMAIN" ]]; then echo -e "${RED}Domain cannot be empty for WSS.${NC}"; return 1; fi
     fi
     TCP_MUX="false"
+    # TCPMUX is only compatible with TCP, KCP, and WSS.
     if [[ "$FRP_PROTOCOL" == "tcp" || "$FRP_PROTOCOL" == "wss" || "$FRP_PROTOCOL" == "kcp" ]]; then
         read -p $'\n'"Enable TCP Multiplexer (tcpmux) for better performance? [y/N]: " mux_choice
         if [[ "$mux_choice" =~ ^[Yy]$ ]]; then TCP_MUX="true"; fi
@@ -79,8 +80,6 @@ download_and_extract() {
     wget -q "${FRP_DOWNLOAD_URL}" -O "${FRP_TAR_FILE}"
     tar -zxvf "${FRP_TAR_FILE}" -C "${FRP_INSTALL_DIR}" --strip-components=1
     rm "${FRP_TAR_FILE}"
-    
-    # NEW: Verify the downloaded version
     INSTALLED_VERSION=$(${FRP_INSTALL_DIR}/frps --version)
     echo -e "${GREEN}--> FRP version ${INSTALLED_VERSION} downloaded successfully.${NC}"
 }
@@ -93,8 +92,8 @@ dashboard_addr = 0.0.0.0
 dashboard_port = ${FRP_DASHBOARD_PORT}
 dashboard_user = admin
 dashboard_pwd = FRP_PASSWORD_123
-tcp_mux = ${TCP_MUX}
 EOF
+    if [[ "$TCP_MUX" == "true" ]]; then echo "tcp_mux = true" >> ${FRP_INSTALL_DIR}/frps.ini; fi
     case $FRP_PROTOCOL in "tcp" | "sudp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "kcp") echo "kcp_bind_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "quic") echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "wss") echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini; echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini ;; esac
     echo -e "${YELLOW}--> Setting up firewall...${NC}"
     if [[ "$FRP_PROTOCOL" == "tcp" || "$FRP_PROTOCOL" == "sudp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi
@@ -129,8 +128,8 @@ setup_foreign_server() {
     cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
 server_addr = ${IRAN_SERVER_IP}
-tcp_mux = ${TCP_MUX}
 EOF
+    if [[ "$TCP_MUX" == "true" ]]; then echo "tcp_mux = true" >> ${FRP_INSTALL_DIR}/frpc.ini; fi
     case $FRP_PROTOCOL in "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "kcp") echo "server_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = kcp" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "quic") echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = quic" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "wss") echo "server_port = 443" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = wss" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "server_name = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "sudp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = sudp" >> ${FRP_INSTALL_DIR}/frpc.ini ;; esac
     cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
@@ -175,7 +174,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v35.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v36.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
