@@ -2,14 +2,14 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v34.0 - Latest FRP Version)
+#   APPLOOS FRP TUNNEL - Full Management Script (v35.0 - Latest FRP Version + Verify)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
 # ==================================================================================
 
 # --- Static Configuration Variables ---
-FRP_VERSION="0.62.1" # <-- UPDATED to the latest stable version
+FRP_VERSION="0.62.1" # <-- Using latest stable version
 FRP_INSTALL_DIR="/opt/frp"
 SYSTEMD_DIR="/etc/systemd/system"
 FRP_TCP_CONTROL_PORT="7000"
@@ -79,6 +79,10 @@ download_and_extract() {
     wget -q "${FRP_DOWNLOAD_URL}" -O "${FRP_TAR_FILE}"
     tar -zxvf "${FRP_TAR_FILE}" -C "${FRP_INSTALL_DIR}" --strip-components=1
     rm "${FRP_TAR_FILE}"
+    
+    # NEW: Verify the downloaded version
+    INSTALLED_VERSION=$(${FRP_INSTALL_DIR}/frps --version)
+    echo -e "${GREEN}--> FRP version ${INSTALLED_VERSION} downloaded successfully.${NC}"
 }
 setup_iran_server() {
     get_server_ips && get_port_input && get_protocol_choice || return 1
@@ -171,7 +175,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v34.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v35.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
