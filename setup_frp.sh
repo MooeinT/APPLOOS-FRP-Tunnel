@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v37.0 - Final SUDP Fix)
+#   APPLOOS FRP TUNNEL - Full Management Script (v38.0 - Final Protocol Key Fix)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -15,7 +15,7 @@ SYSTEMD_DIR="/etc/systemd/system"
 FRP_TCP_CONTROL_PORT="7000"
 FRP_KCP_CONTROL_PORT="7002"
 FRP_QUIC_CONTROL_PORT="7001"
-FRP_SUDP_CONTROL_PORT="7003" # Dedicated port for SUDP
+FRP_SUDP_CONTROL_PORT="7003"
 FRP_DASHBOARD_PORT="7500"
 XUI_PANEL_PORT="54333"
 
@@ -86,33 +86,25 @@ download_and_extract() {
 setup_iran_server() {
     get_server_ips && get_port_input && get_protocol_choice || return 1
     echo -e "\n${YELLOW}--- Setting up Iran Server (frps) ---${NC}"; stop_frp_processes; download_and_extract
-    
-    # In this version, frps always listens on all possible control ports
     cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
 [common]
-bind_port = ${FRP_TCP_CONTROL_PORT}
-kcp_bind_port = ${FRP_KCP_CONTROL_PORT}
-quic_bind_port = ${FRP_QUIC_CONTROL_PORT}
-sudp_bind_port = ${FRP_SUDP_CONTROL_PORT}
 dashboard_addr = 0.0.0.0
 dashboard_port = ${FRP_DASHBOARD_PORT}
 dashboard_user = admin
 dashboard_pwd = FRP_PASSWORD_123
 tcp_mux = ${TCP_MUX}
 EOF
-    if [[ "$FRP_PROTOCOL" == "wss" ]]; then echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini; echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini; fi
-
+    case $FRP_PROTOCOL in "tcp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "kcp") echo "kcp_bind_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "quic") echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "wss") echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini; echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "sudp") echo "sudp_bind_port = ${FRP_SUDP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; esac
     echo -e "${YELLOW}--> Setting up firewall...${NC}"
-    ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null
-    ufw allow ${FRP_KCP_CONTROL_PORT}/udp > /dev/null
-    ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null
-    ufw allow ${FRP_SUDP_CONTROL_PORT}/udp > /dev/null
+    if [[ "$FRP_PROTOCOL" == "tcp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi
+    if [[ "$FRP_PROTOCOL" == "kcp" ]]; then ufw allow ${FRP_KCP_CONTROL_PORT}/udp > /dev/null; fi
+    if [[ "$FRP_PROTOCOL" == "quic" ]]; then ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null; fi
+    if [[ "$FRP_PROTOCOL" == "sudp" ]]; then ufw allow ${FRP_SUDP_CONTROL_PORT}/udp > /dev/null; fi
     if [[ "$FRP_PROTOCOL" == "wss" ]]; then ufw allow 80/tcp > /dev/null; ufw allow 443/tcp > /dev/null; fi
     ufw allow ${FRP_DASHBOARD_PORT}/tcp > /dev/null
     OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_TUNNEL_PORTS_UFW"; IFS=$OLD_IFS
     for port in "${PORTS_ARRAY[@]}"; do ufw allow "$port"/tcp > /dev/null; ufw allow "$port"/udp > /dev/null; done
     ufw reload > /dev/null
-    
     cat > ${SYSTEMD_DIR}/frps.service << EOF
 [Unit]
 Description=FRP Server (frps)
@@ -139,8 +131,8 @@ setup_foreign_server() {
 server_addr = ${IRAN_SERVER_IP}
 tcp_mux = ${TCP_MUX}
 EOF
-    case $FRP_PROTOCOL in "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "kcp") echo "server_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = kcp" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "quic") echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = quic" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "wss") echo "server_port = 443" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = wss" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "server_name = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "sudp") echo "server_port = ${FRP_SUDP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = sudp" >> ${FRP_INSTALL_DIR}/frpc.ini ;; esac
-    
+    # Using the new 'transport.protocol' key for frpc
+    case $FRP_PROTOCOL in "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "kcp") echo "server_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "transport.protocol = kcp" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "quic") echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "transport.protocol = quic" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "wss") echo "server_port = 443" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "transport.protocol = wss" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "server_name = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "sudp") echo "server_port = ${FRP_SUDP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "transport.protocol = sudp" >> ${FRP_INSTALL_DIR}/frpc.ini ;; esac
     cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
 [range:tcp_proxies]
@@ -184,7 +176,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v37.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v38.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
