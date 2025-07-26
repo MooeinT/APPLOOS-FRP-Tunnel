@@ -218,11 +218,18 @@ EOF
      get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
      echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"; stop_frp_processes; download_and_extract
 
+     # Directly set protocol and server_port based on FRP_PROTOCOL
+     # This eliminates potential issues with sed and ensures correct common config.
+     local SERVER_PORT_TO_USE="${FRP_TCP_CONTROL_PORT}"
+     if [[ "$FRP_PROTOCOL" == "quic" ]]; then
+         SERVER_PORT_TO_USE="${FRP_QUIC_CONTROL_PORT}"
+     fi
+
      cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
 server_addr = ${IRAN_SERVER_IP}
-server_port = ${FRP_TCP_CONTROL_PORT} # Default to TCP control port
-protocol = tcp                         # Default protocol for common connection
+server_port = ${SERVER_PORT_TO_USE}
+protocol = ${FRP_PROTOCOL} # Dynamically set protocol here
 
 authentication_method = token
 token = ${FRP_TOKEN}
@@ -232,14 +239,6 @@ tcp_mux = ${TCP_MUX}
 # log_level = info
 # log_max_days = 3
 EOF
-
-    # Adjust server_port and protocol for common section based on chosen protocol
-    case $FRP_PROTOCOL in
-        "quic")
-            sed -i "s/server_port = ${FRP_TCP_CONTROL_PORT}/server_port = ${FRP_QUIC_CONTROL_PORT}/" ${FRP_INSTALL_DIR}/frpc.ini
-            sed -i "/protocol = tcp/c\protocol = quic" ${FRP_INSTALL_DIR}/frpc.ini
-            ;;
-    esac
 
      # Add TCP range proxies if specified
      if [ -n "$FRP_TCP_PORTS_FRP" ]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
