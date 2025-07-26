@@ -46,7 +46,7 @@
     if [ -z "$FRP_TOKEN" ]; then
         echo -e "${RED}Authentication token cannot be empty. Please enter a token.${NC}"
         return 1
-    fi
+    end
     return 0
 }
 
@@ -219,6 +219,12 @@ EOF
  setup_foreign_server() {
      get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
      echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"; stop_frp_processes; download_and_extract
+
+     # Generate random secret keys for STCP/SUDP/XTCP
+     STCP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
+     SUDP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
+     XTCP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
+
      cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
 server_addr = ${IRAN_SERVER_IP}
@@ -283,14 +289,16 @@ EOF
      fi
 
     # Add specific blocks for STCP, SUDP, XTCP if chosen
+    # Default local_port values are common service ports (e.g., SSH, DNS, VNC)
+    # Default remote_port values are example ports that should be open on the frps server
     if [[ "$FRP_PROTOCOL" == "stcp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
 [stcp_tunnel]
 type = stcp
 local_ip = 127.0.0.1
-local_port = 22 # Example: Tunnel SSH or other service behind this STCP proxy
-remote_port = 6003 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
-sk = YOUR_STCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY! MUST BE SAME ON CLIENT/VISITOR SIDE!
+local_port = 22 # Default: Tunnel SSH. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT (e.g., 443 for V2Ray)
+remote_port = 6003 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
+sk = ${STCP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
 EOF
     fi
 
@@ -299,9 +307,9 @@ EOF
 [sudp_tunnel]
 type = sudp
 local_ip = 127.0.0.1
-local_port = 53 # Example: Tunnel DNS or other UDP service
-remote_port = 6004 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
-sk = YOUR_SUDP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY! MUST BE SAME ON CLIENT/VISITOR SIDE!
+local_port = 53 # Default: Tunnel DNS. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT
+remote_port = 6004 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
+sk = ${SUDP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
 EOF
     fi
 
@@ -310,9 +318,9 @@ EOF
 [xtcp_tunnel]
 type = xtcp
 local_ip = 127.0.0.1
-local_port = 5900 # Example: Tunnel VNC or other direct P2P service
-remote_port = 6005 # Example: Remote port on Iran server (MUST BE OPEN ON IRAN SERVER)
-sk = YOUR_XTCP_SECRET_KEY # IMPORTANT: CHANGE THIS KEY! MUST BE SAME ON CLIENT/VISITOR SIDE!
+local_port = 5900 # Default: Tunnel VNC. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT
+remote_port = 6005 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
+sk = ${XTCP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
 EOF
     fi
 
@@ -334,6 +342,32 @@ WantedBy=multi-user.target
 EOF
      systemctl daemon-reload; systemctl enable frpc.service > /dev/null; systemctl restart frpc.service
      echo -e "\n${GREEN}SUCCESS! Foreign Server setup is complete.${NC}"
+
+     # Display generated secret keys if STCP/SUDP/XTCP was chosen
+     if [[ "$FRP_PROTOCOL" == "stcp" ]]; then
+         echo -e "\n${YELLOW}--- STCP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
+         echo -e "  STCP Tunnel Name: ${GREEN}stcp_tunnel${NC}"
+         echo -e "  STCP Secret Key (sk): ${GREEN}${STCP_SK}${NC}"
+         echo -e "  Default Local Port (frpc): ${GREEN}22${NC}"
+         echo -e "  Default Remote Port (frps): ${GREEN}6003${NC}"
+         echo -e "  Remember to set 'server_name = stcp_tunnel' and 'sk = ${STCP_SK}' in your local FRP Visitor config."
+     fi
+     if [[ "$FRP_PROTOCOL" == "sudp" ]]; then
+         echo -e "\n${YELLOW}--- SUDP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
+         echo -e "  SUDP Tunnel Name: ${GREEN}sudp_tunnel${NC}"
+         echo -e "  SUDP Secret Key (sk): ${GREEN}${SUDP_SK}${NC}"
+         echo -e "  Default Local Port (frpc): ${GREEN}53${NC}"
+         echo -e "  Default Remote Port (frps): ${GREEN}6004${NC}"
+         echo -e "  Remember to set 'server_name = sudp_tunnel' and 'sk = ${SUDP_SK}' in your local FRP Visitor config."
+     fi
+     if [[ "$FRP_PROTOCOL" == "xtcp" ]]; then
+         echo -e "\n${YELLOW}--- XTCP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
+         echo -e "  XTCP Tunnel Name: ${GREEN}xtcp_tunnel${NC}"
+         echo -e "  XTCP Secret Key (sk): ${GREEN}${XTCP_SK}${NC}"
+         echo -e "  Default Local Port (frpc): ${GREEN}5900${NC}"
+         echo -e "  Default Remote Port (frps): ${GREEN}6005${NC}"
+         echo -e "  Remember to set 'server_name = xtcp_tunnel' and 'sk = ${XTCP_SK}' in your local FRP Visitor config."
+     fi
  }
  uninstall_frp() {
      echo -e "\n${YELLOW}Uninstalling FRP...${NC}"; stop_frp_processes
