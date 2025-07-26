@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v52.0 - Final WSS/tcpmux Fix)
+#   APPLOOS FRP TUNNEL - Full Management Script (v53.0 - Final Stable)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -61,7 +61,6 @@ get_protocol_choice() {
         if [[ -z "$FRP_DOMAIN" ]]; then echo -e "${RED}Domain cannot be empty for WSS.${NC}"; return 1; fi
     fi
     TCP_MUX="false"
-    # CORRECTED: TCPMUX is only compatible with TCP and KCP. Disabled for WSS to ensure stability.
     if [[ "$FRP_PROTOCOL" == "tcp" || "$FRP_PROTOCOL" == "kcp" ]]; then
         read -p $'\n'"Enable TCP Multiplexer (tcpmux) for better performance? [y/N]: " mux_choice
         if [[ "$mux_choice" =~ ^[Yy]$ ]]; then TCP_MUX="true"; fi
@@ -87,17 +86,24 @@ setup_iran_server() {
     if [ "$FRP_PROTOCOL" == "wss" ]; then
         echo -e "${YELLOW}--> WSS mode: Installing Nginx & Certbot...${NC}"; apt-get update -y > /dev/null && apt-get install nginx certbot python3-certbot-nginx -y > /dev/null
         if [ $? -ne 0 ]; then echo -e "${RED}Failed to install Nginx/Certbot.${NC}"; return 1; fi
-        systemctl stop nginx
-        echo -e "${YELLOW}--> Obtaining SSL certificate for ${FRP_DOMAIN}...${NC}";
-        certbot certonly --standalone --agree-tos --non-interactive --email you@example.com -d ${FRP_DOMAIN}
-        if [ $? -ne 0 ]; then echo -e "${RED}Failed to obtain SSL certificate. Check your DNS record and that port 80 is open.${NC}"; systemctl start nginx; return 1; fi
-        echo -e "${YELLOW}--> Configuring Nginx as a reverse proxy...${NC}"
+        
+        echo -e "${YELLOW}--> Creating temporary Nginx config for SSL challenge...${NC}"
         cat > /etc/nginx/sites-available/default << EOF
 server {
     listen 80;
     server_name ${FRP_DOMAIN};
-    return 301 https://\$host\$request_uri;
+    root /var/www/html;
+    index index.html index.htm;
 }
+EOF
+        systemctl restart nginx
+        
+        echo -e "${YELLOW}--> Obtaining SSL certificate for ${FRP_DOMAIN}...${NC}";
+        certbot --nginx --agree-tos --redirect --non-interactive --email you@example.com -d ${FRP_DOMAIN}
+        if [ $? -ne 0 ]; then echo -e "${RED}Failed to obtain SSL certificate. Check your DNS record and that port 80 is open.${NC}"; return 1; fi
+        
+        echo -e "${YELLOW}--> Configuring Nginx as a reverse proxy...${NC}"
+        cat > /etc/nginx/sites-available/default << EOF
 server {
     listen 443 ssl http2;
     server_name ${FRP_DOMAIN};
@@ -117,15 +123,11 @@ server {
 }
 EOF
         systemctl restart nginx
+
         cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
 [common]
 vhost_http_port = ${FRP_TCP_CONTROL_PORT}
 subdomain_host = ${FRP_DOMAIN}
-dashboard_addr = 127.0.0.1
-dashboard_port = ${FRP_DASHBOARD_PORT}
-dashboard_user = admin
-dashboard_pwd = FRP_PASSWORD_123
-tcp_mux = false
 EOF
     else
         cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
@@ -141,9 +143,10 @@ EOF
         if [[ "$FRP_PROTOCOL" == "quic" ]]; then echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini; fi
     fi
 
-    echo -e "${YELLOW}--> Setting up firewall...${NC}"; ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null
-    if [[ "$FRP_PROTOCOL" == "kcp" ]]; then ufw allow ${FRP_KCP_CONTROL_PORT}/udp > /dev/null; fi
-    if [[ "$FRP_PROTOCOL" == "quic" ]]; then ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null; fi
+    echo -e "${YELLOW}--> Setting up firewall...${NC}";
+    if [[ "$FRP_PROTOCOL" == "tcp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi
+    if [[ "$FRP_PROTOCOL" == "kcp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; ufw allow ${FRP_KCP_CONTROL_PORT}/udp > /dev/null; fi
+    if [[ "$FRP_PROTOCOL" == "quic" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null; fi
     if [[ "$FRP_PROTOCOL" == "wss" ]]; then ufw allow 80/tcp > /dev/null; ufw allow 443/tcp > /dev/null; else ufw allow ${FRP_DASHBOARD_PORT}/tcp > /dev/null; fi
     OLD_IFS=$IFS; IFS=','; read -ra PORTS_ARRAY <<< "$FRP_TUNNEL_PORTS_UFW"; IFS=$OLD_IFS
     for port in "${PORTS_ARRAY[@]}"; do ufw allow "$port"/tcp > /dev/null; ufw allow "$port"/udp > /dev/null; done
@@ -221,7 +224,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v52.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v53.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"; check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
         read -p "Enter your choice [1-3]: " choice
