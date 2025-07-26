@@ -94,17 +94,11 @@
      echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}"
      echo "  1. TCP (Standard)"
      echo "  2. QUIC (Recommended for latency)"
-     echo "  3. STCP (Secret TCP - for private, encrypted TCP tunnels)"
-     echo "  4. SUDP (Secret UDP - for private, encrypted UDP tunnels)"
-     echo "  5. XTCP (P2P Connect - experimental direct client-to-client connection)"
-     read -p "Enter choice [1-5]: " proto_choice
+     read -p "Enter choice [1-2]: " proto_choice # Changed options from 1-5 to 1-2
      FRP_PROTOCOL="tcp" # Default
      case "$proto_choice" in
          "1") FRP_PROTOCOL="tcp" ;;
          "2") FRP_PROTOCOL="quic" ;;
-         "3") FRP_PROTOCOL="stcp" ;;
-         "4") FRP_PROTOCOL="sudp" ;;
-         "5") FRP_PROTOCOL="xtcp" ;;
          *) echo -e "${RED}Invalid protocol choice. Defaulting to TCP.${NC}";;
      esac
 
@@ -130,16 +124,16 @@
          "aarch64") FRP_ARCH="arm64" ;;
          "armv7l") FRP_ARCH="arm" ;;
          "i386") FRP_ARCH="386" ;;
-         *) echo -e "${RED}Your CPU architecture (${ARCH}) is not supported.${NC}"; exit 1 ;; # Changed error_exit to echo and exit
+         *) echo -e "${RED}Your CPU architecture (${ARCH}) is not supported.${NC}"; exit 1 ;;
      esac
      FRP_TAR_FILE="frp_${FRP_VERSION}_linux_${FRP_ARCH}.tar.gz"
      wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${FRP_TAR_FILE}" -O "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}"
-     if [ $? -ne 0 ]; then # Check for wget download success
+     if [ $? -ne 0 ]; then
          echo -e "${RED}ERROR: Failed to download FRP binary. Check internet connection or FRP version/architecture.${NC}"
          exit 1
      fi
      tar -zxvf "${FRP_INSTALL_DIR}/${FRP_TAR_FILE}" -C "${FRP_INSTALL_DIR}" --strip-components=1
-     if [ $? -ne 0 ]; then # Check for tar extraction success
+     if [ $? -ne 0 ]; then
          echo -e "${RED}ERROR: Failed to extract FRP files. The downloaded archive might be corrupted.${NC}"
          exit 1
      fi
@@ -197,11 +191,7 @@ EOF
          done
      fi
 
-     # Add example remote ports for STCP, SUDP, XTCP if they might be used
-     # These are just example ports. User must ensure these are open if chosen.
-     sudo ufw allow 6003/tcp comment "FRP STCP Remote Port (Example)" > /dev/null
-     sudo ufw allow 6004/udp comment "FRP SUDP Remote Port (Example)" > /dev/null
-     sudo ufw allow 6005/tcp comment "FRP XTCP Remote Port (Example)" > /dev/null # XTCP can use TCP for initial connection
+     # Removed: Example remote ports for STCP, SUDP, XTCP
 
      sudo ufw reload > /dev/null
 
@@ -228,10 +218,7 @@ EOF
      get_server_ips && get_frp_token && get_port_input && get_protocol_choice || return 1
      echo -e "\n${YELLOW}--- Setting up Foreign Server (frpc) ---${NC}"; stop_frp_processes; download_and_extract
 
-     # Generate random secret keys for STCP/SUDP/XTCP
-     STCP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
-     SUDP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
-     XTCP_SK=$(head /dev/urandom | tr -dc A-Za-z0-9_ | head -c 16)
+     # Removed: Generation of random secret keys for STCP/SUDP/XTCP
 
      cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
@@ -249,7 +236,6 @@ tcp_mux = ${TCP_MUX}
 EOF
 
     # Adjust server_port and protocol for common section based on chosen protocol
-    # Note: STCP/SUDP/XTCP use 'tcp' as common protocol, their specific 'type' handles the rest.
     case $FRP_PROTOCOL in
         "quic")
             sed -i "s/server_port = ${FRP_TCP_CONTROL_PORT}/server_port = ${FRP_QUIC_CONTROL_PORT}/" ${FRP_INSTALL_DIR}/frpc.ini
@@ -296,41 +282,7 @@ custom_domains = ${FRP_DOMAIN}
 EOF
      fi
 
-    # Add specific blocks for STCP, SUDP, XTCP if chosen
-    # Default local_port values are common service ports (e.g., SSH, DNS, VNC)
-    # Default remote_port values are example ports that should be open on the frps server
-    if [[ "$FRP_PROTOCOL" == "stcp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
-
-[stcp_tunnel]
-type = stcp
-local_ip = 127.0.0.1
-local_port = 22 # Default: Tunnel SSH. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT (e.g., 443 for V2Ray)
-remote_port = 6003 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
-sk = ${STCP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
-EOF
-    fi
-
-    if [[ "$FRP_PROTOCOL" == "sudp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
-
-[sudp_tunnel]
-type = sudp
-local_ip = 127.0.0.1
-local_port = 53 # Default: Tunnel DNS. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT
-remote_port = 6004 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
-sk = ${SUDP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
-EOF
-    fi
-
-    if [[ "$FRP_PROTOCOL" == "xtcp" ]]; then cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
-
-[xtcp_tunnel]
-type = xtcp
-local_ip = 127.0.0.1
-local_port = 5900 # Default: Tunnel VNC. CHANGE THIS TO YOUR DESIRED LOCAL SERVICE PORT
-remote_port = 6005 # Default: Remote port on Iran server. Ensure this port is OPEN on Iran server firewall!
-sk = ${XTCP_SK} # AUTOMATICALLY GENERATED. COPY THIS KEY TO YOUR FRP VISITOR CONFIG!
-EOF
-    fi
+    # Removed: Specific blocks for STCP, SUDP, XTCP
 
 
      cat > ${SYSTEMD_DIR}/frpc.service << EOF
@@ -351,31 +303,7 @@ EOF
      systemctl daemon-reload; systemctl enable frpc.service > /dev/null; systemctl restart frpc.service
      echo -e "\n${GREEN}SUCCESS! Foreign Server setup is complete.${NC}"
 
-     # Display generated secret keys if STCP/SUDP/XTCP was chosen
-     if [[ "$FRP_PROTOCOL" == "stcp" ]]; then
-         echo -e "\n${YELLOW}--- STCP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
-         echo -e "  STCP Tunnel Name: ${GREEN}stcp_tunnel${NC}"
-         echo -e "  STCP Secret Key (sk): ${GREEN}${STCP_SK}${NC}"
-         echo -e "  Default Local Port (frpc): ${GREEN}22${NC}"
-         echo -e "  Default Remote Port (frps): ${GREEN}6003${NC}"
-         echo -e "  Remember to set 'server_name = stcp_tunnel' and 'sk = ${STCP_SK}' in your local FRP Visitor config."
-     fi
-     if [[ "$FRP_PROTOCOL" == "sudp" ]]; then
-         echo -e "\n${YELLOW}--- SUDP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
-         echo -e "  SUDP Tunnel Name: ${GREEN}sudp_tunnel${NC}"
-         echo -e "  SUDP Secret Key (sk): ${GREEN}${SUDP_SK}${NC}"
-         echo -e "  Default Local Port (frpc): ${GREEN}53${NC}"
-         echo -e "  Default Remote Port (frps): ${GREEN}6004${NC}"
-         echo -e "  Remember to set 'server_name = sudp_tunnel' and 'sk = ${SUDP_SK}' in your local FRP Visitor config."
-     fi
-     if [[ "$FRP_PROTOCOL" == "xtcp" ]]; then
-         echo -e "\n${YELLOW}--- XTCP Tunnel Details (Copy for your Local FRP Visitor) ---${NC}"
-         echo -e "  XTCP Tunnel Name: ${GREEN}xtcp_tunnel${NC}"
-         echo -e "  XTCP Secret Key (sk): ${GREEN}${XTCP_SK}${NC}"
-         echo -e "  Default Local Port (frpc): ${GREEN}5900${NC}"
-         echo -e "  Default Remote Port (frps): ${GREEN}6005${NC}"
-         echo -e "  Remember to set 'server_name = xtcp_tunnel' and 'sk = ${XTCP_SK}' in your local FRP Visitor config."
-     fi
+     # Removed: Display generated secret keys if STCP/SUDP/XTCP was chosen
  }
  uninstall_frp() {
      echo -e "\n${YELLOW}Uninstalling FRP...${NC}"; stop_frp_processes
