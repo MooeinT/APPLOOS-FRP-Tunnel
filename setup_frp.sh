@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v56.0 - Final WSS/Nginx Overhaul)
+#   APPLOOS FRP TUNNEL - Full Management Script (v57.0 - Final WSS Logic Fix)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -84,33 +84,31 @@ setup_iran_server() {
     echo -e "\n${YELLOW}--- Setting up Iran Server (frps) ---${NC}"; stop_frp_processes; download_and_extract
     
     if [ "$FRP_PROTOCOL" == "wss" ]; then
-        echo -e "${YELLOW}--> WSS mode: Checking prerequisites...${NC}"
-        if ! command -v nginx &> /dev/null || ! command -v certbot &> /dev/null; then
-            echo -e "${YELLOW}--> Installing Nginx & Certbot...${NC}"; apt-get update -y > /dev/null && apt-get install nginx certbot python3-certbot-nginx -y > /dev/null
-            if [ $? -ne 0 ]; then echo -e "${RED}Failed to install Nginx/Certbot.${NC}"; return 1; fi
-        fi
-
+        echo -e "${YELLOW}--> WSS mode: Installing Nginx & Certbot...${NC}"; apt-get update -y > /dev/null && apt-get install nginx certbot python3-certbot-nginx -y > /dev/null
+        if [ $? -ne 0 ]; then echo -e "${RED}Failed to install Nginx/Certbot.${NC}"; return 1; fi
+        
+        echo -e "${YELLOW}--> Stopping any existing Nginx/Apache service to free up ports...${NC}"
+        systemctl stop nginx > /dev/null 2>&1
+        systemctl stop apache2 > /dev/null 2>&1
+        
+        echo -e "${YELLOW}--> Checking if ports 80/443 are free...${NC}"
         if lsof -i :80 -t >/dev/null || lsof -i :443 -t >/dev/null; then
-            echo -e "${RED}ERROR: Port 80 or 443 is already in use. Please stop the conflicting service (e.g., apache2) and try again.${NC}"
+            echo -e "${RED}ERROR: Port 80 or 443 is still in use by another process.${NC}"
+            echo -e "${YELLOW}Use 'sudo lsof -i :80' and 'sudo lsof -i :443' to find the conflicting process.${NC}"
             return 1
         fi
         
-        systemctl stop nginx
         echo -e "${YELLOW}--> Obtaining SSL certificate for ${FRP_DOMAIN}...${NC}";
         certbot certonly --standalone --agree-tos --non-interactive --email you@example.com -d ${FRP_DOMAIN}
-        if [ $? -ne 0 ]; then echo -e "${RED}Failed to obtain SSL certificate. Check your DNS record for ${FRP_DOMAIN} and that port 80 is open.${NC}"; systemctl start nginx; return 1; fi
+        if [ $? -ne 0 ]; then echo -e "${RED}Failed to obtain SSL certificate. Check your DNS record and that port 80 is not blocked by your provider.${NC}"; return 1; fi
         
         echo -e "${YELLOW}--> Configuring Nginx as a reverse proxy...${NC}"
         cat > /etc/nginx/sites-available/default << EOF
 server {
     listen 80;
     server_name ${FRP_DOMAIN};
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://\$host\$request_uri; }
 }
 server {
     listen 443 ssl http2;
@@ -119,7 +117,6 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/${FRP_DOMAIN}/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-
     location / {
         proxy_redirect off;
         proxy_pass http://127.0.0.1:${FRP_TCP_CONTROL_PORT};
@@ -142,6 +139,7 @@ dashboard_user = admin
 dashboard_pwd = FRP_PASSWORD_123
 EOF
     else
+        # Standard TCP/KCP/QUIC setup
         cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
 [common]
 dashboard_addr = 0.0.0.0
@@ -236,7 +234,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v56.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v57.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"; check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
         read -p "Enter your choice [1-3]: " choice
