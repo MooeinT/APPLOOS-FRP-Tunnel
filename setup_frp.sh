@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v54.0 - Final WSS/Nginx Logic)
+#   APPLOOS FRP TUNNEL - Full Management Script (v55.0 - Final Stable Release)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -43,7 +43,7 @@ get_server_ips() {
 }
 get_port_input() {
     echo -e "\n${CYAN}Please enter the port(s) you want to tunnel for BOTH TCP & UDP.${NC}"
-    echo -e "Examples:\n  - A single port: ${YELLOW}8080${NC}\n  - A range: ${YELLOW}20000-30000${NC}\n  - A mix: ${YELLOW}80,443,9000-9100${NC}"
+    echo -e "Examples:\n  - A single port: ${YELLOW}8080${NC}\n  - A range of ports: ${YELLOW}20000-30000${NC}\n  - A mix: ${YELLOW}80,443,9000-9100${NC}"
     read -p "Enter ports: " user_ports
     if [[ -z "$user_ports" ]]; then echo -e "${RED}No ports entered.${NC}"; return 1; fi
     if [[ "$user_ports" == *"$XUI_PANEL_PORT"* ]]; then echo -e "\n${RED}ERROR: Tunneling the XUI panel port (${XUI_PANEL_PORT}) is not allowed.${NC}"; return 1; fi
@@ -131,7 +131,6 @@ dashboard_user = admin
 dashboard_pwd = FRP_PASSWORD_123
 EOF
     else
-        # Standard TCP/KCP/QUIC setup
         cat > ${FRP_INSTALL_DIR}/frps.ini << EOF
 [common]
 dashboard_addr = 0.0.0.0
