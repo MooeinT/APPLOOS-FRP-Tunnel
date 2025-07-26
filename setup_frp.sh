@@ -2,7 +2,7 @@
 
 # ==================================================================================
 #
-#   APPLOOS FRP TUNNEL - Full Management Script (v39.0 - Final SUDP Logic Fix)
+#   APPLOOS FRP TUNNEL - Full Management Script (v40.0 - SUDP Removed)
 #   Developed By: @AliTabari
 #   Purpose: Automate the installation, configuration, and management of FRP.
 #
@@ -42,7 +42,7 @@ get_server_ips() {
     return 0
 }
 get_port_input() {
-    echo -e "\n${CYAN}Please enter the port(s) to tunnel for BOTH TCP & UDP.${NC}"
+    echo -e "\n${CYAN}Please enter the port(s) you want to tunnel for BOTH TCP & UDP.${NC}"
     echo -e "Examples:\n  - A single port: ${YELLOW}8080${NC}\n  - A range: ${YELLOW}20000-30000${NC}\n  - A mix: ${YELLOW}80,443,9000-9100${NC}"
     read -p "Enter ports: " user_ports
     if [[ -z "$user_ports" ]]; then echo -e "${RED}No ports entered.${NC}"; return 1; fi
@@ -53,9 +53,9 @@ get_port_input() {
 get_protocol_choice() {
     echo -e "\n${CYAN}Select the main transport protocol for the tunnel:${NC}"
     echo "  1. TCP (Standard)"; echo "  2. KCP (Fast on lossy networks)"; echo "  3. QUIC (Modern & fast, UDP-based)"
-    echo "  4. WSS (Max stealth, requires domain)"; echo "  5. SUDP (Simple UDP, low overhead)"
-    read -p "Enter your choice [1-5]: " proto_choice
-    case $proto_choice in 2) FRP_PROTOCOL="kcp" ;; 3) FRP_PROTOCOL="quic" ;; 4) FRP_PROTOCOL="wss" ;; 5) FRP_PROTOCOL="sudp" ;; *) FRP_PROTOCOL="tcp" ;; esac
+    echo "  4. WSS (Max stealth, requires domain)"
+    read -p "Enter your choice [1-4]: " proto_choice
+    case $proto_choice in 2) FRP_PROTOCOL="kcp" ;; 3) FRP_PROTOCOL="quic" ;; 4) FRP_PROTOCOL="wss" ;; *) FRP_PROTOCOL="tcp" ;; esac
     if [[ "$FRP_PROTOCOL" == "wss" ]]; then
         read -p "Enter your domain pointed to the Iran server (e.g., frp.yourdomain.com): " FRP_DOMAIN
         if [[ -z "$FRP_DOMAIN" ]]; then echo -e "${RED}Domain cannot be empty for WSS.${NC}"; return 1; fi
@@ -93,10 +93,9 @@ dashboard_user = admin
 dashboard_pwd = FRP_PASSWORD_123
 tcp_mux = ${TCP_MUX}
 EOF
-    case $FRP_PROTOCOL in "tcp" | "sudp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "kcp") echo "kcp_bind_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "quic") echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "wss") echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini; echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini ;; esac
+    case $FRP_PROTOCOL in "tcp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "kcp") echo "kcp_bind_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "quic") echo "quic_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;; "wss") echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini; echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini ;; esac
     echo -e "${YELLOW}--> Setting up firewall...${NC}"
-    # SUDP uses the main TCP port for handshake, so open TCP port 7000 for it as well.
-    if [[ "$FRP_PROTOCOL" == "tcp" || "$FRP_PROTOCOL" == "sudp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi
+    if [[ "$FRP_PROTOCOL" == "tcp" ]]; then ufw allow ${FRP_TCP_CONTROL_PORT}/tcp > /dev/null; fi
     if [[ "$FRP_PROTOCOL" == "kcp" ]]; then ufw allow ${FRP_KCP_CONTROL_PORT}/udp > /dev/null; fi
     if [[ "$FRP_PROTOCOL" == "quic" ]]; then ufw allow ${FRP_QUIC_CONTROL_PORT}/udp > /dev/null; fi
     if [[ "$FRP_PROTOCOL" == "wss" ]]; then ufw allow 80/tcp > /dev/null; ufw allow 443/tcp > /dev/null; fi
@@ -130,11 +129,7 @@ setup_foreign_server() {
 server_addr = ${IRAN_SERVER_IP}
 tcp_mux = ${TCP_MUX}
 EOF
-    # CORRECTED SUDP LOGIC: Connects to the main TCP port.
-    case $FRP_PROTOCOL in "tcp" | "sudp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "kcp") echo "server_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "quic") echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "wss") echo "server_port = 443" >> ${FRP_INSTALL_DIR}/frpc.ini ;; esac
-    # Add protocol setting only for non-TCP protocols
-    case $FRP_PROTOCOL in "kcp" | "quic" | "wss" | "sudp") echo "protocol = ${FRP_PROTOCOL}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; esac
-    if [[ "$FRP_PROTOCOL" == "wss" ]]; then echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "server_name = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frpc.ini; fi
+    case $FRP_PROTOCOL in "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "kcp") echo "server_port = ${FRP_KCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "transport.protocol = kcp" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "quic") echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "transport.protocol = quic" >> ${FRP_INSTALL_DIR}/frpc.ini ;; "wss") echo "server_port = 443" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "transport.protocol = wss" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "server_name = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frpc.ini ;; esac
     cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
 [range:tcp_proxies]
@@ -178,7 +173,7 @@ uninstall_frp() {
 main_menu() {
     while true; do
         clear; CURRENT_SERVER_IP=$(wget -qO- 'https://api.ipify.org' || echo "N/A")
-        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v39.0"; echo "================================================="
+        echo "================================================="; echo -e "      ${CYAN}APPLOOS FRP TUNNEL${NC} - v40.0"; echo "================================================="
         echo -e "  Developed By ${YELLOW}@AliTabari${NC}"; echo -e "  This Server's Public IP: ${GREEN}${CURRENT_SERVER_IP}${NC}"
         check_install_status
         echo "-------------------------------------------------"; echo "  1. Setup/Reconfigure FRP Tunnel"; echo "  2. Uninstall FRP"; echo "  3. Exit"; echo "-------------------------------------------------"
