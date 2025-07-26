@@ -12,8 +12,8 @@
 FRP_VERSION="0.59.0"
 FRP_INSTALL_DIR="/opt/frp"
 SYSTEMD_DIR="/etc/systemd/system"
-FRP_TCP_CONTROL_PORT="7000"
-FRP_QUIC_CONTROL_PORT="7001"
+FRP_TCP_CONTROL_PORT="7000" # FIXED for troubleshooting
+FRP_QUIC_CONTROL_PORT="7001" # Will not be used in this troubleshooting step
 FRP_DASHBOARD_PORT="7500"
 XUI_PANEL_PORT="54333" # Protected Port
 
@@ -47,7 +47,7 @@ get_port_input() {
     HTTP_HTTPS_TUNNEL="false"
     FRP_DOMAIN=""
 
-    echo -e "\n${CYAN}Enter the TCP port(s) you want to tunnel (e.g., 8080, 20000-30000, or leave blank).${NC}"
+    echo -e "\n${CYAN}Enter the TCP port(s) you want to tunnel (e.g., 8080, 20000-30000).${NC}"
     read -p "TCP Ports: " user_tcp_ports
     # Validate TCP ports format and XUI port conflict
     if [[ -n "$user_tcp_ports" ]]; then
@@ -99,38 +99,16 @@ get_port_input() {
     return 0
 }
 
+# Protocol and TCP_MUX are now fixed for troubleshooting
 get_protocol_choice() {
-    echo -e "\n${CYAN}Select transport protocol for the main tunnel connection:${NC}"
-    echo "  1. TCP (Standard)"
-    echo "  2. QUIC (Recommended for latency)"
-    echo "  3. WSS (Max Stealth, Requires Domain)"
-    # Loop until a valid choice is made
-    while true; do
-        read -p "Enter choice [1-3]: " proto_choice
-        if [[ "$proto_choice" == "1" ]]; then
-            FRP_PROTOCOL="tcp"
-            break
-        elif [[ "$proto_choice" == "2" ]]; then
-            FRP_PROTOCOL="quic"
-            break
-        elif [[ "$proto_choice" == "3" ]]; then
-            FRP_PROTOCOL="wss"
-            # If WSS is chosen, and HTTP_HTTPS_TUNNEL was NOT chosen before, we MUST ask for domain
-            # If HTTP_HTTPS_TUNNEL was true, FRP_DOMAIN is already set.
-            if [[ -z "$FRP_DOMAIN" ]]; then # Only ask if domain isn't already set by HTTP/HTTPS
-                read -p "Enter your domain/subdomain for WSS (e.g., frp.yourdomain.com): " FRP_DOMAIN
-                if [[ -z "$FRP_DOMAIN" ]]; then echo -e "${RED}Domain cannot be empty for WSS.${NC}"; return 1; fi
-            fi
-            break
-        else
-            echo -e "${RED}Invalid choice. Please enter 1 for TCP, 2 for QUIC, or 3 for WSS.${NC}"
-        fi
-    done
-
-    TCP_MUX="false"
-    if [[ "$FRP_PROTOCOL" == "tcp" || "$FRP_PROTOCOL" == "wss" ]]; then
-        read -p $'\n'"Enable TCP Multiplexer (tcpmux) for better performance? [y/N]: " mux_choice
-        if [[ "$mux_choice" =~ ^[Yy]$ ]]; then TCP_MUX="true"; fi
+    FRP_PROTOCOL="tcp" # Fixed to TCP for troubleshooting
+    TCP_MUX="false"    # Fixed to false for troubleshooting
+    echo -e "\n${YELLOW}Using fixed protocol: TCP, TCP Multiplexer: Disabled (for troubleshooting).${NC}"
+    # If WSS was chosen in previous step via HTTP_HTTPS_TUNNEL, we need to ensure FRP_DOMAIN is set.
+    # This scenario is less likely as we are forcing TCP, but keeping for robustness.
+    if [[ "$HTTP_HTTPS_TUNNEL" == "true" && -z "$FRP_DOMAIN" ]]; then
+        echo -e "${RED}ERROR: Domain must be set for HTTP/HTTPS Vhost even with TCP protocol selected in this troubleshooting step.${NC}"
+        return 1
     fi
     return 0
 }
@@ -183,20 +161,25 @@ dashboard_addr = 0.0.0.0
 dashboard_port = ${FRP_DASHBOARD_PORT}
 dashboard_user = admin
 dashboard_pwd = FRP_PASSWORD_123 # IMPORTANT: CHANGE THIS PASSWORD IMMEDIATELY!
-tcp_mux = ${TCP_MUX}
+bind_port = ${FRP_TCP_CONTROL_PORT} # Fixed to TCP control port
+tcp_mux = ${TCP_MUX} # Fixed for troubleshooting
 EOF
-    # Using case for dynamic config
-    case $FRP_PROTOCOL in
-        "tcp") echo "bind_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
-        "quic") echo "bind_udp_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini; echo "kcp_bind_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
-        "wss") echo "vhost_https_port = 443" >> ${FRP_INSTALL_DIR}/frps.ini; echo "subdomain_host = ${FRP_DOMAIN}" >> ${FRP_INSTALL_DIR}/frps.ini ;;
-    esac
+
+    # If HTTP/HTTPS tunnel is chosen, add vhost_https_port
+    if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then
+        cat >> ${FRP_INSTALL_DIR}/frps.ini << EOF
+vhost_https_port = 443
+subdomain_host = ${FRP_DOMAIN}
+EOF
+    fi
 
     echo -e "${YELLOW}--> Setting up firewall...${NC}"
     sudo ufw allow ssh comment "Allow SSH" > /dev/null
-    if [[ "$FRP_PROTOCOL" == "tcp" ]]; then sudo ufw allow ${FRP_TCP_CONTROL_PORT}/tcp comment "FRP TCP Control" > /dev/null; fi
-    if [[ "$FRP_PROTOCOL" == "quic" ]]; then sudo ufw allow ${FRP_QUIC_CONTROL_PORT}/udp comment "FRP UDP/QUIC Control (for QUIC protocol & UDP proxies)" > /dev/null; fi
-    if [[ "$FRP_PROTOCOL" == "wss" ]]; then sudo ufw allow 80/tcp comment "FRP HTTP Vhost" > /dev/null; sudo ufw allow 443/tcp comment "FRP HTTPS Vhost" > /dev/null; fi
+    sudo ufw allow ${FRP_TCP_CONTROL_PORT}/tcp comment "FRP TCP Control" > /dev/null # Allow the fixed TCP control port
+    if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then
+        sudo ufw allow 80/tcp comment "FRP HTTP Vhost" > /dev/null
+        sudo ufw allow 443/tcp comment "FRP HTTPS Vhost" > /dev/null
+    fi
     sudo ufw allow ${FRP_DASHBOARD_PORT}/tcp comment "FRP Dashboard" > /dev/null
 
     # Allow user-specified TCP/UDP ports for range proxies
@@ -229,16 +212,34 @@ EOF
      cat > ${FRP_INSTALL_DIR}/frpc.ini << EOF
 [common]
 server_addr = ${IRAN_SERVER_IP}
-tcp_mux = ${TCP_MUX}
+server_port = ${FRP_TCP_CONTROL_PORT} # Fixed to TCP control port
+tcp_mux = ${TCP_MUX} # Fixed for troubleshooting
+loginFailExit = false # Keep trying to connect
 EOF
-    # Using case for dynamic config
-    case $FRP_PROTOCOL in
-        "tcp") echo "server_port = ${FRP_TCP_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini ;;
-        "quic") echo "server_port = ${FRP_QUIC_CONTROL_PORT}" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = quic" >> ${FRP_INSTALL_DIR}/frpc.ini ;;
-        "wss") echo "server_port = 443" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "protocol = wss" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "tls_enable = true" >> ${FRP_INSTALL_DIR}/frpc.ini; echo "subdomain = frp" >> ${FRP_INSTALL_DIR}/frpc.ini ;;
-    esac
 
-    # Add TCP range proxies ONLY if ports were specified
+    # If HTTP/HTTPS tunnel is chosen, add vhost_http_port/vhost_https_port
+    if [[ "$HTTP_HTTPS_TUNNEL" == "true" ]]; then
+        cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
+
+[http_proxy]
+type = http
+local_ip = 127.0.0.1
+local_port = 80
+remote_port = 80
+subdomain = http # You might want to change this
+use_compression = true
+
+[https_proxy]
+type = https
+local_ip = 127.0.0.1
+local_port = 443
+remote_port = 443
+subdomain = https # You might want to change this
+use_compression = true
+EOF
+    fi
+
+    # Add TCP range proxies ONLY if ports were specified by user
     if [ -n "$FRP_TCP_PORTS_FRP" ]; then
         cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
@@ -250,7 +251,7 @@ remote_port = ${FRP_TCP_PORTS_FRP}
 EOF
     fi
 
-    # Add UDP range proxies ONLY if ports were specified
+    # Add UDP range proxies ONLY if ports were specified by user
     if [ -n "$FRP_UDP_PORTS_FRP" ]; then
         cat >> ${FRP_INSTALL_DIR}/frpc.ini << EOF
 
